@@ -101,7 +101,8 @@ fn wide_windows_show_library_queue_and_now_playing() {
 fn narrow_windows_keep_the_queue_and_player() {
     let view = demo();
     let medium = text(&view, 90, 30);
-    assert!(medium.contains("Your Library") && !medium.contains("Now playing"), "{medium}");
+    // No Now playing panel: its cover is the only wide run of half blocks.
+    assert!(medium.contains("Your Library") && !medium.contains(&"▀".repeat(12)), "{medium}");
     let small = text(&view, 60, 24);
     assert!(!small.contains("Your Library"), "{small}");
     assert!(small.contains("Plastic Love") && small.contains("1:23"), "{small}");
@@ -278,4 +279,53 @@ fn tracks_without_art_ask_for_nothing() {
     let mut view = demo();
     assert!(view.wanted().is_empty());
     assert!(View::default().wanted().is_empty());
+}
+
+#[test]
+fn the_queue_reads_like_an_album_page() {
+    let view = demo();
+    let screen = text(&view, 90, 30);
+    for expected in ["Queue", "5 tracks", "Now playing", "Next in queue", "Stay With Me", "Plastic Love"] {
+        assert!(screen.contains(expected), "missing {expected:?} in\n{screen}");
+    }
+    // First Love's length is unknown, so no total.
+    assert!(!screen.contains("5 tracks ·"), "{screen}");
+    keep("queue", &view, 90, 30);
+
+    let idle = View { upcoming: vec![track(Source::Local, "September", "Earth, Wind & Fire", "", 215)], ..View::default() };
+    let screen = text(&idle, 90, 30);
+    assert!(screen.contains("1 track · 4 min") && !screen.contains("Now playing"), "{screen}");
+}
+
+#[test]
+fn queue_totals_round_to_minutes_and_hours() {
+    let long = track(Source::Spotify, "A", "", "", 3_890);
+    let short = track(Source::Spotify, "B", "", "", 100);
+    assert_eq!(view::summary(&[&long, &short]), "2 tracks · 1 hr 7 min");
+    assert_eq!(view::summary(&[&short]), "1 track · 2 min");
+}
+
+#[test]
+fn the_playing_row_dances_and_rests() {
+    let moving = view::equaliser(State::Playing, 83_000);
+    assert_eq!(moving.chars().count(), 3);
+    assert_ne!(moving, view::equaliser(State::Playing, 83_500));
+    assert_eq!(view::equaliser(State::Paused, 83_000), "▂▂▂");
+    assert!(text(&demo(), 140, 40).contains(&moving));
+}
+
+#[test]
+fn the_cover_tints_the_queue_header() {
+    let mut view = demo();
+    let art = "https://i.scdn.co/image/teal".to_string();
+    view.status.track.as_mut().unwrap().art = Some(art.clone());
+    let picture = cover::Picture { width: 2, height: 2, pixels: vec![[20, 160, 150]; 4] };
+    view.covers.insert(art, view::Cover::Ready(picture));
+    let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+    terminal.draw(|frame| view::draw(frame, &view)).unwrap();
+    let buffer = terminal.backend().buffer();
+    // The queue panel starts at column 29: tinted at the top, panel grey lower down.
+    let ratatui::style::Color::Rgb(r, g, b) = buffer[(60, 0)].bg else { panic!() };
+    assert!(g > r + 50 && b > r + 50, "{:?}", (r, g, b));
+    assert_eq!(buffer[(60, 30)].bg, ratatui::style::Color::Rgb(18, 18, 18));
 }

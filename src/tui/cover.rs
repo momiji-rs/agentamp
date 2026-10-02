@@ -54,6 +54,25 @@ impl Picture {
         sum.map(|total| (total / count.max(1)) as u8)
     }
 
+    /// The colour the picture is mostly, dark enough for white text: the mean
+    /// weighted to its vivid pixels, so a grey frame around a red face
+    /// gives red, as Spotify tints a page by its cover.
+    pub fn tint(&self) -> [u8; 3] {
+        let mut sum = [0u64; 3];
+        let mut weight = 0u64;
+        for pixel in &self.pixels {
+            let (high, low) = (pixel.iter().max().unwrap_or(&0), pixel.iter().min().unwrap_or(&0));
+            let w = u64::from(high - low) + 1;
+            for (total, channel) in sum.iter_mut().zip(pixel) {
+                *total += u64::from(*channel) * w;
+            }
+            weight += w;
+        }
+        let mean = sum.map(|total| total / weight.max(1));
+        let high = mean.iter().copied().max().unwrap_or(0).max(1);
+        mean.map(|channel| (channel * 100 / high) as u8)
+    }
+
     /// Draws the picture scaled to fill `area`, two pixels per cell.
     pub fn draw(&self, area: Rect, buffer: &mut Buffer) {
         if self.width == 0 || self.height == 0 {
@@ -77,7 +96,7 @@ pub fn hash(text: &str) -> u64 {
     text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3))
 }
 
-fn mix(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
+pub fn mix(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
     let t = t.clamp(0.0, 1.0);
     std::array::from_fn(|i| (f32::from(a[i]) + (f32::from(b[i]) - f32::from(a[i])) * t).round() as u8)
 }
@@ -125,6 +144,17 @@ mod tests {
         let mut buffer = Buffer::empty(Rect::new(0, 0, 1, 1));
         picture.draw(Rect::new(0, 0, 1, 1), &mut buffer);
         assert_eq!(buffer[(0, 0)].fg, Color::Rgb(100, 0, 100));
+    }
+
+    #[test]
+    fn the_tint_follows_the_vivid_pixels() {
+        let grey = [90, 90, 90];
+        let mut pixels = vec![grey; 12];
+        pixels.extend([[200, 30, 30]; 4]);
+        let tint = Picture { width: 4, height: 4, pixels }.tint();
+        assert_eq!(tint[0], 100);
+        assert!(tint[1] < 30 && tint[2] < 30, "{tint:?}");
+        assert_eq!(Picture { width: 1, height: 1, pixels: vec![[0, 0, 0]] }.tint(), [0, 0, 0]);
     }
 
     #[test]

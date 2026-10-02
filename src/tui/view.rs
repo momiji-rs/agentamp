@@ -5,7 +5,7 @@ use std::collections::HashMap;
 
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
 use ratatui::widgets::{Block, Cell, Clear, Padding, Paragraph, Row, Table};
@@ -24,6 +24,7 @@ const GREEN: Color = Color::Rgb(30, 215, 96);
 const RED: Color = Color::Rgb(241, 94, 108);
 const YOUTUBE: Color = Color::Rgb(255, 51, 51);
 const FILES: Color = Color::Rgb(80, 155, 245);
+const RULE: Color = Color::Rgb(90, 90, 90);
 
 /// Below these widths the side panels give their room to the queue.
 const WITH_BOTH_PANELS: u16 = 110;
@@ -31,6 +32,8 @@ const WITH_LIBRARY: u16 = 80;
 /// Spotify caps its progress bar's width; so does the window.
 const MAX_PROGRESS: u16 = 72;
 const VOLUME_WIDTH: u16 = 14;
+/// How far down the queue the cover's tint reaches.
+const FADE_ROWS: u16 = 18;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PromptKind {
@@ -192,12 +195,23 @@ fn library(frame: &mut Frame, area: Rect, view: &View) {
     frame.render_widget(Paragraph::new(lines).style(Style::new().fg(TEXT)), inner);
 }
 
+/// The queue as Spotify draws an album page: a header tinted by the
+/// playing cover that fades into the panel, then what plays now and what
+/// plays next.
 fn queue(frame: &mut Frame, area: Rect, view: &View) {
-    let block = panel("Queue");
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    frame.render_widget(Block::new().style(Style::new().bg(PANEL)), area);
     let current = view.status.track.as_ref();
-    if current.is_none() && view.upcoming.is_empty() {
+    let tint = current.map_or([40, 40, 40], |track| cover_picture(view, track).tint());
+    fade(frame.buffer_mut(), area, tint);
+    let inner = area.inner(Margin::new(1, 0));
+    let tracks: Vec<&Track> = current.into_iter().chain(&view.upcoming).collect();
+    let mut rest = inner;
+    let mut header = vec![Line::raw(""), Line::styled("Queue", Style::new().fg(TEXT).add_modifier(Modifier::BOLD))];
+    if !tracks.is_empty() {
+        header.push(Line::styled(summary(&tracks), Style::new().fg(SUBDUED)));
+    }
+    frame.render_widget(Paragraph::new(header), take(&mut rest, 4));
+    if tracks.is_empty() {
         let hint = Text::from(vec![
             Line::raw(""),
             Line::styled("Nothing queued", Style::new().fg(TEXT).add_modifier(Modifier::BOLD)),
@@ -208,35 +222,78 @@ fn queue(frame: &mut Frame, area: Rect, view: &View) {
                 Span::styled(" and give a link, a yt: search or a folder.", Style::new().fg(SUBDUED)),
             ]),
         ]);
-        frame.render_widget(Paragraph::new(hint).alignment(Alignment::Center), inner);
+        frame.render_widget(Paragraph::new(hint).alignment(Alignment::Center), rest);
         return;
     }
 
     // The album column only when some track has an album to show.
-    let wide = inner.width >= 60 && current.into_iter().chain(&view.upcoming).any(|t| !t.album.is_empty());
-    let mut rows = Vec::new();
-    if let Some(track) = current {
-        let mark = match view.status.state {
-            State::Paused => "▌▐",
-            _ => "▶",
-        };
-        rows.push(row(mark, track, true, wide));
-    }
-    for (i, track) in view.upcoming.iter().enumerate() {
-        rows.push(row(&(i + 1).to_string(), track, false, wide));
-    }
+    let wide = inner.width >= 60 && tracks.iter().any(|t| !t.album.is_empty());
     let mut widths = vec![Constraint::Length(3), Constraint::Fill(3)];
-    let mut header = vec![Cell::from("#"), Cell::from("Title")];
+    let mut labels = vec![Cell::from("#"), Cell::from("Title")];
     if wide {
         widths.push(Constraint::Fill(2));
-        header.push(Cell::from("Album"));
+        labels.push(Cell::from("Album"));
     }
     widths.push(Constraint::Length(5));
-    header.push(Cell::from(Line::from("Time").alignment(Alignment::Right)));
-    let table = Table::new(rows, widths)
-        .header(Row::new(header).style(Style::new().fg(SUBDUED)).bottom_margin(1))
-        .column_spacing(2);
-    frame.render_widget(table, inner);
+    labels.push(Cell::from(Line::from("Time").alignment(Alignment::Right)));
+    let table = |rows: Vec<Row<'static>>| Table::new(rows, widths.clone()).column_spacing(2);
+    frame.render_widget(table(vec![Row::new(labels).style(Style::new().fg(SUBDUED))]), take(&mut rest, 1));
+    let rule = Line::styled("─".repeat(usize::from(rest.width)), Style::new().fg(RULE));
+    frame.render_widget(Paragraph::new(rule), take(&mut rest, 2));
+
+    let heading = |text: &'static str| Paragraph::new(Line::styled(text, Style::new().fg(TEXT).add_modifier(Modifier::BOLD)));
+    if let Some(track) = current {
+        frame.render_widget(heading("Now playing"), take(&mut rest, 1));
+        let mark = equaliser(view.status.state, view.status.position_ms);
+        frame.render_widget(table(vec![row(&mark, track, true, wide)]), take(&mut rest, 3));
+    }
+    if !view.upcoming.is_empty() {
+        frame.render_widget(heading("Next in queue"), take(&mut rest, 1));
+        let rows = view.upcoming.iter().enumerate().map(|(i, track)| row(&(i + 1).to_string(), track, false, wide));
+        frame.render_widget(table(rows.collect()), rest);
+    }
+}
+
+/// Splits the top `height` rows off `rest`.
+fn take(rest: &mut Rect, height: u16) -> Rect {
+    let height = height.min(rest.height);
+    let top = Rect { height, ..*rest };
+    *rest = Rect { y: rest.y + height, height: rest.height - height, ..*rest };
+    top
+}
+
+/// Tints the top rows of `area` from `tint` down to the panel's colour.
+fn fade(buffer: &mut Buffer, area: Rect, tint: [u8; 3]) {
+    let Color::Rgb(r, g, b) = PANEL else { return };
+    let rows = area.height.min(FADE_ROWS);
+    for i in 0..rows {
+        let [r, g, b] = super::cover::mix(tint, [r, g, b], f32::from(i) / f32::from(rows));
+        buffer.set_style(Rect { y: area.y + i, height: 1, ..area }, Style::new().bg(Color::Rgb(r, g, b)));
+    }
+}
+
+/// "5 tracks · 21 min", the time only when every length is known.
+pub fn summary(tracks: &[&Track]) -> String {
+    let count = if tracks.len() == 1 { "1 track".to_string() } else { format!("{} tracks", tracks.len()) };
+    if tracks.iter().any(|t| t.duration_ms == 0) {
+        return count;
+    }
+    let minutes = (tracks.iter().map(|t| u64::from(t.duration_ms)).sum::<u64>() + 30_000) / 60_000;
+    match minutes / 60 {
+        0 => format!("{count} · {minutes} min"),
+        hours => format!("{count} · {hours} hr {} min", minutes % 60),
+    }
+}
+
+/// The playing row's mark: bars that move with the song, and rest when
+/// it pauses. They change with each position the daemon reports.
+pub fn equaliser(state: State, position_ms: u32) -> String {
+    const LEVELS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    if state != State::Playing {
+        return "▂▂▂".into();
+    }
+    let step = position_ms / 500;
+    (0..3u32).map(|bar| LEVELS[((step.wrapping_mul(bar * 2 + 3) + bar * 5) % 8) as usize]).collect()
 }
 
 fn row(index: &str, track: &Track, current: bool, wide: bool) -> Row<'static> {
@@ -359,6 +416,14 @@ fn cover(view: &View, track: &Track, area: Rect, buffer: &mut Buffer) {
     match track.art.as_ref().and_then(|art| view.covers.get(art)) {
         Some(Cover::Ready(picture)) => picture.draw(area, buffer),
         _ => Picture::placeholder(cover_seed(track), area.width, area.height * 2).draw(area, buffer),
+    }
+}
+
+/// The picture the cover shows, small: the loaded one or the stand-in.
+fn cover_picture(view: &View, track: &Track) -> Picture {
+    match track.art.as_ref().and_then(|art| view.covers.get(art)) {
+        Some(Cover::Ready(picture)) => picture.clone(),
+        _ => Picture::placeholder(cover_seed(track), 8, 8),
     }
 }
 
