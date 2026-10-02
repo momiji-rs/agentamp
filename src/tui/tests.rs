@@ -17,7 +17,7 @@ fn track(source: Source, title: &str, artist: &str, album: &str, seconds: u32) -
 /// A full queue from all three sources, partway through a song.
 fn demo() -> View {
     let mut view = View::default();
-    let mut playing = track(Source::Spotify, "真夜中のドア〜stay with me", "Miki Matsubara", "Pocket Park", 334);
+    let mut playing = track(Source::Spotify, "Stay With Me", "Miki Matsubara", "Pocket Park", 334);
     playing.uri = "spotify:track:2BHj31ufdEqVK5CkYDp9mA".into();
     view.status = Status {
         state: State::Playing,
@@ -31,7 +31,7 @@ fn demo() -> View {
         track(Source::Youtube, "Plastic Love", "Mariya Takeuchi", "", 308),
         track(Source::Spotify, "Midnight Pretenders", "Tomoko Aran", "Fuyü-Kükan", 342),
         track(Source::Local, "September", "Earth, Wind & Fire", "The Best of Earth, Wind & Fire", 215),
-        track(Source::Spotify, "Stay With Me", "Hikaru Utada", "", 0),
+        track(Source::Spotify, "First Love", "Hikaru Utada", "", 0),
     ];
     view.history = vec![
         track(Source::Local, "Ride on Time", "Tatsuro Yamashita", "Ride on Time", 357),
@@ -92,7 +92,7 @@ fn wide_windows_show_library_queue_and_now_playing() {
     ] {
         assert!(screen.contains(expected), "missing {expected:?} in\n{screen}");
     }
-    assert!(screen.contains("真夜中のドア"), "{screen}");
+    assert!(screen.contains("Stay With Me"), "{screen}");
     keep("playing", &view, 140, 40);
 }
 
