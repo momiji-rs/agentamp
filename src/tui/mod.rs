@@ -24,8 +24,6 @@ use view::{Cover, Prompt, PromptKind};
 
 /// How often the window asks the daemon what it is doing.
 const POLL: Duration = Duration::from_millis(500);
-/// How long a key press may wait for the window to notice it.
-const INPUT: Duration = Duration::from_millis(100);
 const SEEK_STEP_MS: u32 = 10_000;
 const VOLUME_STEP: u8 = 5;
 
@@ -37,6 +35,18 @@ enum Update {
     Art { art: String, loaded: Option<art::Art> },
 }
 
+/// What wakes the window: the daemon or the terminal.
+enum Wake {
+    Update(Update),
+    Input(Event),
+}
+
+impl From<Update> for Wake {
+    fn from(update: Update) -> Self {
+        Wake::Update(update)
+    }
+}
+
 #[derive(Debug, PartialEq)]
 enum Command {
     Send(Request),
@@ -45,17 +55,19 @@ enum Command {
 
 pub fn run(paths: Paths) -> Result<()> {
     let (jobs, requests) = mpsc::channel();
-    let (updates, received) = mpsc::channel();
+    let (wakes, received) = mpsc::channel();
     let (covers, wanted) = mpsc::channel();
     let dir = paths.art();
-    let art_updates = updates.clone();
-    std::thread::Builder::new().name("daemon-link".into()).spawn(move || link(paths, requests, updates))?;
-    std::thread::Builder::new().name("cover-art".into()).spawn(move || load_art(&dir, wanted, art_updates))?;
+    let (art_wakes, input_wakes) = (wakes.clone(), wakes.clone());
+    std::thread::Builder::new().name("daemon-link".into()).spawn(move || link(paths, requests, wakes))?;
+    std::thread::Builder::new().name("cover-art".into()).spawn(move || load_art(&dir, wanted, art_wakes))?;
     crate::trace::mark("threads");
     let mut terminal = ratatui::init();
     crate::trace::mark("terminal");
     let mut graphics = graphics::Graphics::detect();
     crate::trace::mark(format!("graphics {}", if graphics.is_some() { "images" } else { "blocks" }));
+    // After the image query, which reads its answers from the terminal itself.
+    std::thread::Builder::new().name("input".into()).spawn(move || read_input(input_wakes))?;
     let result = event_loop(&mut terminal, &mut graphics, &jobs, &covers, &received);
     ratatui::restore();
     crate::trace::flush();
@@ -67,7 +79,7 @@ fn event_loop(
     graphics: &mut Option<graphics::Graphics>,
     jobs: &mpsc::Sender<Request>,
     covers: &mpsc::Sender<String>,
-    updates: &mpsc::Receiver<Update>,
+    wakes: &mpsc::Receiver<Wake>,
 ) -> Result<()> {
     let mut view = View { icons: icons::from_env(), ..View::default() };
     let mut dirty = true;
@@ -75,19 +87,6 @@ fn event_loop(
     let mut keys = 0u32;
     let mut listening = false;
     loop {
-        while let Ok(mut update) = updates.try_recv() {
-            if crate::trace::enabled() {
-                crate::trace::mark(match &update {
-                    Update::Snapshot { .. } => "applied snapshot",
-                    Update::Answer(_) => "applied answer",
-                    Update::Art { .. } => "applied art",
-                });
-            }
-            if let (Some(graphics), Update::Art { art, loaded: Some(loaded) }) = (graphics.as_mut(), &mut update) {
-                graphics.offer(art.clone(), std::mem::take(&mut loaded.image));
-            }
-            dirty |= view.apply(update);
-        }
         for art in view.wanted() {
             covers.send(art)?;
         }
@@ -112,22 +111,45 @@ fn event_loop(
             listening = true;
             crate::trace::mark("input ready");
         }
-        if !event::poll(INPUT)? {
-            continue;
-        }
-        match event::read()? {
-            Event::Key(key) if key.kind == KeyEventKind::Press => {
-                keys += 1;
-                crate::trace::mark(format!("key {keys}"));
-                match view.key(key) {
-                    Some(Command::Quit) => return Ok(()),
-                    Some(Command::Send(request)) => jobs.send(request)?,
-                    None => {}
+        // Sleeps until the daemon or the terminal says something, then
+        // takes all that came in, so one frame shows it all.
+        for wake in std::iter::once(wakes.recv()?).chain(std::iter::from_fn(|| wakes.try_recv().ok())) {
+            match wake {
+                Wake::Update(mut update) => {
+                    if crate::trace::enabled() {
+                        crate::trace::mark(match &update {
+                            Update::Snapshot { .. } => "applied snapshot",
+                            Update::Answer(_) => "applied answer",
+                            Update::Art { .. } => "applied art",
+                        });
+                    }
+                    if let (Some(graphics), Update::Art { art, loaded: Some(loaded) }) = (graphics.as_mut(), &mut update) {
+                        graphics.offer(art.clone(), std::mem::take(&mut loaded.image));
+                    }
+                    dirty |= view.apply(update);
                 }
-                dirty = true;
+                Wake::Input(Event::Key(key)) if key.kind == KeyEventKind::Press => {
+                    keys += 1;
+                    crate::trace::mark(format!("key {keys}"));
+                    match view.key(key) {
+                        Some(Command::Quit) => return Ok(()),
+                        Some(Command::Send(request)) => jobs.send(request)?,
+                        None => {}
+                    }
+                    dirty = true;
+                }
+                Wake::Input(Event::Resize(..)) => dirty = true,
+                Wake::Input(_) => {}
             }
-            Event::Resize(..) => dirty = true,
-            _ => {}
+        }
+    }
+}
+
+/// Hands the terminal's events to the window as they come.
+fn read_input(wakes: mpsc::Sender<Wake>) {
+    while let Ok(event) = event::read() {
+        if wakes.send(Wake::Input(event)).is_err() {
+            return;
         }
     }
 }
@@ -135,14 +157,21 @@ fn event_loop(
 /// Talks to the daemon off the drawing thread: runs requests and polls the
 /// player's state. Play and add can take seconds (a YouTube download), so
 /// they run on their own threads and controls stay quick meanwhile.
-fn link(paths: Paths, requests: mpsc::Receiver<Request>, updates: mpsc::Sender<Update>) {
+fn link(paths: Paths, requests: mpsc::Receiver<Request>, updates: mpsc::Sender<Wake>) {
     loop {
+        // First at once, so the window opens on the player's state.
+        if let Ok(update) = snapshot(&paths) {
+            crate::trace::mark("snapshot");
+            if updates.send(update.into()).is_err() {
+                return;
+            }
+        }
         match requests.recv_timeout(POLL) {
             Ok(request) => {
                 let slow = matches!(request, Request::Play { .. } | Request::Add { .. });
                 let (paths, updates) = (paths.clone(), updates.clone());
                 let job = move || {
-                    let _ = updates.send(Update::Answer(answer(&paths, &request)));
+                    let _ = updates.send(Update::Answer(answer(&paths, &request)).into());
                 };
                 if slow {
                     std::thread::spawn(job);
@@ -153,22 +182,17 @@ fn link(paths: Paths, requests: mpsc::Receiver<Request>, updates: mpsc::Sender<U
             Err(mpsc::RecvTimeoutError::Timeout) => {}
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
         }
-        let Ok(update) = snapshot(&paths) else { continue };
-        crate::trace::mark("snapshot");
-        if updates.send(update).is_err() {
-            return;
-        }
     }
 }
 
 /// Loads covers one at a time as the window asks for them.
-fn load_art(dir: &std::path::Path, wanted: mpsc::Receiver<String>, updates: mpsc::Sender<Update>) {
+fn load_art(dir: &std::path::Path, wanted: mpsc::Receiver<String>, updates: mpsc::Sender<Wake>) {
     let client = librespot_core::http_client::HttpClient::new(None);
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else { return };
     for art in wanted {
         crate::trace::mark("art wanted");
         let loaded = art::load(&art, dir, &client, &runtime).inspect_err(|e| log::debug!("cover {art}: {e:#}")).ok();
-        if updates.send(Update::Art { art, loaded }).is_err() {
+        if updates.send(Update::Art { art, loaded }.into()).is_err() {
             return;
         }
         crate::trace::mark("art loaded");

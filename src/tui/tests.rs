@@ -329,3 +329,14 @@ fn the_cover_tints_the_queue_header() {
     assert!(g > r + 50 && b > r + 50, "{:?}", (r, g, b));
     assert_eq!(buffer[(60, 30)].bg, ratatui::style::Color::Rgb(18, 18, 18));
 }
+
+#[test]
+fn the_first_snapshot_does_not_wait_for_the_poll() {
+    let paths = crate::paths::Paths::under(&crate::testutil::scratch("tui-first-snapshot"));
+    let (_jobs, requests) = std::sync::mpsc::channel();
+    let (wakes, received) = std::sync::mpsc::channel();
+    std::thread::spawn(move || link(paths, requests, wakes));
+    // With no daemon, the snapshot is a stopped player, made at once.
+    let first = received.recv_timeout(POLL / 5).expect("no snapshot before the first poll");
+    assert!(matches!(first, Wake::Update(Update::Snapshot { .. })));
+}
