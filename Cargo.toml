@@ -27,6 +27,9 @@ librespot-metadata = { version = "0.8", default-features = false }
 rodio = { version = "0.21", default-features = false, features = ["playback", "mp3", "flac", "mp4", "vorbis", "wav"] }
 # Title, artist, album and duration of local files.
 lofty = "0.25"
+ratatui = { version = "0.30", default-features = false, features = ["crossterm", "layout-cache"] }
+# The same width tables ratatui lays out with, to place the cursor in --frame output.
+unicode-width = "0.2"
 
 [profile.release]
 lto = "thin"

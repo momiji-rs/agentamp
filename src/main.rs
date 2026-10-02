@@ -9,6 +9,7 @@ mod queue;
 mod resolve;
 mod spotify;
 mod target;
+mod tui;
 mod youtube;
 
 use std::process::{Command, ExitCode, Stdio};
@@ -29,8 +30,9 @@ struct Cli {
     /// Print the daemon's JSON answer instead of a line of text.
     #[arg(long, global = true)]
     json: bool,
+    /// With no command, AgentAmp opens its window.
     #[command(subcommand)]
-    command: Cmd,
+    command: Option<Cmd>,
 }
 
 #[derive(Subcommand)]
@@ -62,6 +64,12 @@ enum Cmd {
     Volume { percent: u8 },
     /// Jump to a position in seconds, or m:ss.
     Seek { position: String },
+    /// Open the window (the default). Closing it keeps the music playing.
+    Tui {
+        /// Print one frame of the window at this size, as terminal output, and exit.
+        #[arg(long, value_name = "COLSxROWS")]
+        frame: Option<String>,
+    },
     /// Sign in to Spotify (Premium) in the browser.
     Login,
     /// Forget the Spotify sign-in.
@@ -85,7 +93,13 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<()> {
     let paths = Paths::new()?;
-    let request = match cli.command {
+    let request = match cli.command.unwrap_or(Cmd::Tui { frame: None }) {
+        Cmd::Tui { frame: None } => return tui::run(paths),
+        Cmd::Tui { frame: Some(size) } => {
+            let (cols, rows) = tui::parse_size(&size)?;
+            print!("{}", tui::frame(&paths, cols, rows)?);
+            return Ok(());
+        }
         Cmd::Daemon => return run_daemon(paths),
         Cmd::Login => {
             let name = spotify::login(&paths)?;

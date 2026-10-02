@@ -18,12 +18,24 @@ AgentAmp is an early proof of concept.
 
 ```sh
 cargo test
+scripts/screens.sh   # the TUI tests' frames as PNGs, through termshot
 ```
+
+TUI changes are checked by looking: `scripts/screens.sh` renders the frames
+the tests keep in `target/screens/` with
+[termshot](https://github.com/momiji-rs/termshot).
 
 `Cargo.lock` keeps `vergen` at 9.0.6: librespot-core 0.8's build script does
 not compile against vergen 9.1.
 
 ## Use
+
+`agentamp` alone opens the window: your library, the queue and what is
+playing, with the player bar below. Space plays and pauses, `n` skips, `s`
+stops, the arrows seek and set the volume, `/` plays a link, search or
+path, `a` adds one, and `q` closes the window while the music keeps going.
+`agentamp tui --frame 120x36` prints one frame as terminal output, for
+scripts, agents and screenshots.
 
 ```sh
 agentamp login                     # once, for Spotify
