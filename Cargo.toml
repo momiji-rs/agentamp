@@ -1,0 +1,34 @@
+[package]
+name = "agentamp"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+license = "MIT"
+description = "A tiny, agent-native terminal music player for Spotify, YouTube and local files"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4.5", features = ["derive"] }
+directories = "6"
+log = "0.4"
+# No colours, regexes or timestamps parsing: the log is a plain file.
+env_logger = { version = "0.11", default-features = false }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal"] }
+# Spotify: the session, playback, sign-in and catalogue metadata. Playback
+# needs Premium.
+librespot-core = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
+librespot-playback = { version = "0.8", default-features = false, features = ["rodio-backend", "rustls-tls-native-roots"] }
+librespot-oauth = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
+librespot-metadata = { version = "0.8", default-features = false }
+# Local files and YouTube audio. The same rodio and symphonia librespot
+# already builds, so this adds no second decoder.
+rodio = { version = "0.21", default-features = false, features = ["playback", "mp3", "flac", "mp4", "vorbis", "wav"] }
+# Title, artist, album and duration of local files.
+lofty = "0.25"
+
+[profile.release]
+lto = "thin"
+strip = true
+panic = "abort"
