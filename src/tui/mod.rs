@@ -51,10 +51,14 @@ pub fn run(paths: Paths) -> Result<()> {
     let art_updates = updates.clone();
     std::thread::Builder::new().name("daemon-link".into()).spawn(move || link(paths, requests, updates))?;
     std::thread::Builder::new().name("cover-art".into()).spawn(move || load_art(&dir, wanted, art_updates))?;
+    crate::trace::mark("threads");
     let mut terminal = ratatui::init();
+    crate::trace::mark("terminal");
     let mut graphics = graphics::Graphics::detect();
+    crate::trace::mark(format!("graphics {}", if graphics.is_some() { "images" } else { "blocks" }));
     let result = event_loop(&mut terminal, &mut graphics, &jobs, &covers, &received);
     ratatui::restore();
+    crate::trace::flush();
     result
 }
 
@@ -67,8 +71,18 @@ fn event_loop(
 ) -> Result<()> {
     let mut view = View { icons: icons::from_env(), ..View::default() };
     let mut dirty = true;
+    let mut frames = 0u32;
+    let mut keys = 0u32;
+    let mut listening = false;
     loop {
         while let Ok(mut update) = updates.try_recv() {
+            if crate::trace::enabled() {
+                crate::trace::mark(match &update {
+                    Update::Snapshot { .. } => "applied snapshot",
+                    Update::Answer(_) => "applied answer",
+                    Update::Art { .. } => "applied art",
+                });
+            }
             if let (Some(graphics), Update::Art { art, loaded: Some(loaded) }) = (graphics.as_mut(), &mut update) {
                 graphics.offer(art.clone(), std::mem::take(&mut loaded.image));
             }
@@ -78,6 +92,7 @@ fn event_loop(
             covers.send(art)?;
         }
         if dirty {
+            let start = std::time::Instant::now();
             terminal.draw(|frame| {
                 view::draw(frame, &view);
                 if let Some(graphics) = graphics.as_mut() {
@@ -85,12 +100,23 @@ fn event_loop(
                 }
             })?;
             dirty = false;
+            frames += 1;
+            if crate::trace::enabled() {
+                let what = if view.status.track.is_some() { "playing" } else { "idle" };
+                crate::trace::mark(format!("frame {frames} {}us {what}", start.elapsed().as_micros()));
+            }
+        }
+        if !listening {
+            listening = true;
+            crate::trace::mark("input ready");
         }
         if !event::poll(INPUT)? {
             continue;
         }
         match event::read()? {
             Event::Key(key) if key.kind == KeyEventKind::Press => {
+                keys += 1;
+                crate::trace::mark(format!("key {keys}"));
                 match view.key(key) {
                     Some(Command::Quit) => return Ok(()),
                     Some(Command::Send(request)) => jobs.send(request)?,
@@ -126,6 +152,7 @@ fn link(paths: Paths, requests: mpsc::Receiver<Request>, updates: mpsc::Sender<U
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
         }
         let Ok(update) = snapshot(&paths) else { continue };
+        crate::trace::mark("snapshot");
         if updates.send(update).is_err() {
             return;
         }
@@ -137,10 +164,12 @@ fn load_art(dir: &std::path::Path, wanted: mpsc::Receiver<String>, updates: mpsc
     let client = librespot_core::http_client::HttpClient::new(None);
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else { return };
     for art in wanted {
+        crate::trace::mark("art wanted");
         let loaded = art::load(&art, dir, &client, &runtime).inspect_err(|e| log::debug!("cover {art}: {e:#}")).ok();
         if updates.send(Update::Art { art, loaded }).is_err() {
             return;
         }
+        crate::trace::mark("art loaded");
     }
 }
 

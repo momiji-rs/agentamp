@@ -65,8 +65,10 @@ impl Graphics {
             frame.render_widget(Block::new().style(Style::new().bg(behind)), area);
             let area = footprint(area, self.picker.font_size());
             if !self.shown.iter().any(|(_, shown, _)| *shown == area) {
+                let start = std::time::Instant::now();
                 let fitted = self.picker.new_protocol(DynamicImage::ImageRgb8(image.clone()), area.into(), Resize::Scale(Some(FilterType::Triangle)));
                 let Ok(protocol) = fitted else { continue };
+                crate::trace::mark(format!("image encoded {}x{} {}us", area.width, area.height, start.elapsed().as_micros()));
                 self.shown.push((art.clone(), area, protocol));
             }
             let Some((_, _, protocol)) = self.shown.iter().find(|(_, shown, _)| *shown == area) else { continue };

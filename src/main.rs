@@ -9,6 +9,7 @@ mod queue;
 mod resolve;
 mod spotify;
 mod target;
+mod trace;
 mod tui;
 mod youtube;
 
@@ -83,7 +84,9 @@ enum Cmd {
 }
 
 fn main() -> ExitCode {
+    trace::mark("main");
     let cli = Cli::parse();
+    trace::mark("arguments");
     match run(cli) {
         Ok(()) => ExitCode::SUCCESS,
         Err(e) => {
@@ -95,6 +98,7 @@ fn main() -> ExitCode {
 
 fn run(cli: Cli) -> Result<()> {
     let paths = Paths::new()?;
+    trace::mark("paths");
     let request = match cli.command.unwrap_or(Cmd::Tui { frame: None }) {
         Cmd::Tui { frame: None } => return tui::run(paths),
         Cmd::Tui { frame: Some(size) } => {
