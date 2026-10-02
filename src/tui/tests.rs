@@ -256,7 +256,8 @@ fn a_loaded_cover_replaces_the_stand_in() {
 
     let teal = [20, 160, 150];
     let picture = cover::Picture { width: 4, height: 4, pixels: vec![teal; 16] };
-    assert!(view.apply(Update::Art { art: art.clone(), picture: Some(picture) }));
+    let loaded = art::Art { picture, image: image::RgbImage::new(4, 4) };
+    assert!(view.apply(Update::Art { art: art.clone(), loaded: Some(loaded) }));
     let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
     terminal.draw(|frame| view::draw(frame, &view)).unwrap();
     let buffer = terminal.backend().buffer();
@@ -266,7 +267,7 @@ fn a_loaded_cover_replaces_the_stand_in() {
     assert_eq!(buffer[(3, 35)].fg, teal);
 
     // A cover that fails keeps the stand-in and is not asked for again.
-    view.apply(Update::Art { art: art.clone(), picture: None });
+    view.apply(Update::Art { art: art.clone(), loaded: None });
     terminal.draw(|frame| view::draw(frame, &view)).unwrap();
     assert_ne!(terminal.backend().buffer()[(110, 5)].fg, teal);
     assert!(view.wanted().is_empty());

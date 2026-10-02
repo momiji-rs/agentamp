@@ -90,12 +90,10 @@ impl Default for View {
     }
 }
 
-pub fn draw(frame: &mut Frame, view: &View) {
-    let area = frame.area();
-    frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
+/// The panels across the top, the player bar and the footer.
+fn regions(area: Rect) -> (std::rc::Rc<[Rect]>, Rect, Rect) {
     let [main, player, footer] =
         Layout::vertical([Constraint::Min(0), Constraint::Length(3), Constraint::Length(1)]).spacing(1).areas(area);
-
     let panels: Vec<Constraint> = if area.width >= WITH_BOTH_PANELS {
         vec![Constraint::Length(28), Constraint::Min(40), Constraint::Length(34)]
     } else if area.width >= WITH_LIBRARY {
@@ -103,7 +101,28 @@ pub fn draw(frame: &mut Frame, view: &View) {
     } else {
         vec![Constraint::Min(0)]
     };
-    let columns = Layout::horizontal(panels).spacing(1).split(main);
+    (Layout::horizontal(panels).spacing(1).split(main), player, footer)
+}
+
+/// Where the playing track's cover goes, with the colour around it: the
+/// Now playing panel, when there is room for it, and the player bar.
+pub fn cover_areas(area: Rect, view: &View) -> Vec<(Rect, Color)> {
+    if view.status.track.is_none() {
+        return Vec::new();
+    }
+    let (columns, player, _) = regions(area);
+    let mut areas = Vec::new();
+    if columns.len() == 3 {
+        areas.push((now_playing_layout(panel("").inner(columns[2])).0, PANEL));
+    }
+    areas.push((player_bar_layout(player)[0].0, BG));
+    areas.into_iter().filter(|(rect, _)| !rect.is_empty()).collect()
+}
+
+pub fn draw(frame: &mut Frame, view: &View) {
+    let area = frame.area();
+    frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
+    let (columns, player, footer) = regions(area);
     match columns.len() {
         3 => {
             library(frame, columns[0], view);
@@ -243,11 +262,7 @@ fn now_playing(frame: &mut Frame, area: Rect, view: &View) {
         frame.render_widget(Paragraph::new(Line::styled("Nothing playing", Style::new().fg(FAINT))), inner);
         return;
     };
-    // Cells are about twice as tall as wide, so a square is twice as many
-    // columns as rows, and each row holds two pixels.
-    let rows = (inner.width / 2).min(inner.height.saturating_sub(6));
-    let [art, details] = Layout::vertical([Constraint::Length(rows), Constraint::Min(0)]).spacing(1).areas(inner);
-    let art = Rect { width: rows * 2, ..art };
+    let (art, details) = now_playing_layout(inner);
     cover(view, track, art, frame.buffer_mut());
 
     let mut lines = vec![
@@ -264,20 +279,36 @@ fn now_playing(frame: &mut Frame, area: Rect, view: &View) {
     frame.render_widget(Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: true }), details);
 }
 
+/// The cover and the details below it. Cells are about twice as tall as
+/// wide, so a square is twice as many columns as rows, and each row holds
+/// two pixels.
+fn now_playing_layout(inner: Rect) -> (Rect, Rect) {
+    let rows = (inner.width / 2).min(inner.height.saturating_sub(6));
+    let [art, details] = Layout::vertical([Constraint::Length(rows), Constraint::Min(0)]).spacing(1).areas(inner);
+    (Rect { width: rows * 2, ..art }, details)
+}
+
+/// The bar's thirds, the left one split into its cover and its text.
+/// Three rows of half blocks are six pixels: square at 6 columns.
+fn player_bar_layout(area: Rect) -> [(Rect, Rect); 3] {
+    let inner = area.inner(ratatui::layout::Margin::new(1, 0));
+    let [left, middle, right] =
+        Layout::horizontal([Constraint::Fill(3), Constraint::Fill(4), Constraint::Fill(3)]).spacing(2).areas(inner);
+    let [art, text] = Layout::horizontal([Constraint::Length(6), Constraint::Min(0)]).spacing(2).areas(left);
+    [(art, text), (middle, middle), (right, right)]
+}
+
 /// Spotify's player bar: what plays on the left with its cover, the
 /// transport and progress in the middle, the volume on the right.
 fn player_bar(frame: &mut Frame, area: Rect, view: &View) {
     frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
-    let inner = area.inner(ratatui::layout::Margin::new(1, 0));
-    let [left, middle, right] =
-        Layout::horizontal([Constraint::Fill(3), Constraint::Fill(4), Constraint::Fill(3)]).spacing(2).areas(inner);
+    let [(art, text), (middle, _), (right, _)] = player_bar_layout(area);
+    let left = art.union(text);
     let status = &view.status;
     let icons = view.icons;
 
     match &status.track {
         Some(track) => {
-            // Three rows of half blocks are six pixels: square at 6 columns.
-            let [art, text] = Layout::horizontal([Constraint::Length(6), Constraint::Min(0)]).spacing(2).areas(left);
             cover(view, track, art, frame.buffer_mut());
             let lines = vec![
                 Line::styled(track.title.clone(), Style::new().fg(TEXT).add_modifier(Modifier::BOLD)),

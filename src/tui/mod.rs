@@ -4,6 +4,7 @@
 mod ansi;
 mod art;
 mod cover;
+mod graphics;
 mod icons;
 mod view;
 
@@ -33,7 +34,7 @@ enum Update {
     Snapshot { status: Box<Status>, upcoming: Vec<Track>, history: Vec<Track> },
     Answer(Result<String, String>),
     /// A cover loaded, or failed to.
-    Art { art: String, picture: Option<cover::Picture> },
+    Art { art: String, loaded: Option<art::Art> },
 }
 
 #[derive(Debug, PartialEq)]
@@ -51,13 +52,15 @@ pub fn run(paths: Paths) -> Result<()> {
     std::thread::Builder::new().name("daemon-link".into()).spawn(move || link(paths, requests, updates))?;
     std::thread::Builder::new().name("cover-art".into()).spawn(move || load_art(&dir, wanted, art_updates))?;
     let mut terminal = ratatui::init();
-    let result = event_loop(&mut terminal, &jobs, &covers, &received);
+    let mut graphics = graphics::Graphics::detect();
+    let result = event_loop(&mut terminal, &mut graphics, &jobs, &covers, &received);
     ratatui::restore();
     result
 }
 
 fn event_loop(
     terminal: &mut ratatui::DefaultTerminal,
+    graphics: &mut Option<graphics::Graphics>,
     jobs: &mpsc::Sender<Request>,
     covers: &mpsc::Sender<String>,
     updates: &mpsc::Receiver<Update>,
@@ -65,14 +68,22 @@ fn event_loop(
     let mut view = View { icons: icons::from_env(), ..View::default() };
     let mut dirty = true;
     loop {
-        while let Ok(update) = updates.try_recv() {
+        while let Ok(mut update) = updates.try_recv() {
+            if let (Some(graphics), Update::Art { art, loaded: Some(loaded) }) = (graphics.as_mut(), &mut update) {
+                graphics.offer(art.clone(), std::mem::take(&mut loaded.image));
+            }
             dirty |= view.apply(update);
         }
         for art in view.wanted() {
             covers.send(art)?;
         }
         if dirty {
-            terminal.draw(|frame| view::draw(frame, &view))?;
+            terminal.draw(|frame| {
+                view::draw(frame, &view);
+                if let Some(graphics) = graphics.as_mut() {
+                    graphics.draw(frame, &view);
+                }
+            })?;
             dirty = false;
         }
         if !event::poll(INPUT)? {
@@ -126,8 +137,8 @@ fn load_art(dir: &std::path::Path, wanted: mpsc::Receiver<String>, updates: mpsc
     let client = librespot_core::http_client::HttpClient::new(None);
     let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else { return };
     for art in wanted {
-        let picture = art::load(&art, dir, &client, &runtime).inspect_err(|e| log::debug!("cover {art}: {e:#}")).ok();
-        if updates.send(Update::Art { art, picture }).is_err() {
+        let loaded = art::load(&art, dir, &client, &runtime).inspect_err(|e| log::debug!("cover {art}: {e:#}")).ok();
+        if updates.send(Update::Art { art, loaded }).is_err() {
             return;
         }
     }
@@ -159,8 +170,8 @@ pub fn frame(paths: &Paths, cols: u16, rows: u16) -> Result<String> {
     let client = librespot_core::http_client::HttpClient::new(None);
     let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
     for art in view.wanted() {
-        let picture = art::load(&art, &paths.art(), &client, &runtime).ok();
-        view.apply(Update::Art { art, picture });
+        let loaded = art::load(&art, &paths.art(), &client, &runtime).ok();
+        view.apply(Update::Art { art, loaded });
     }
     render(&view, cols, rows)
 }
@@ -183,8 +194,8 @@ impl View {
                 self.history = history;
                 changed
             }
-            Update::Art { art, picture } => {
-                self.covers.insert(art, picture.map_or(Cover::Missing, Cover::Ready));
+            Update::Art { art, loaded } => {
+                self.covers.insert(art, loaded.map_or(Cover::Missing, |loaded| Cover::Ready(loaded.picture)));
                 true
             }
             Update::Answer(answer) => {

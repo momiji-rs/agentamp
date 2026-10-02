@@ -33,6 +33,10 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 # librespot's HTTP client fetches covers; these are its request types.
 http = "1"
 bytes = "1"
+# Real covers in terminals with kitty graphics, Sixel or iTerm2 images;
+# elsewhere the window draws its own half blocks. Without chafa or the
+# image crate's other formats.
+ratatui-image = { version = "=12.0.0-rc.0", default-features = false, features = ["crossterm"] }
 # The same width tables ratatui lays out with, to place the cursor in --frame output.
 unicode-width = "0.2"
 

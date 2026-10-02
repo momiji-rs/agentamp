@@ -12,10 +12,19 @@ use super::cover::{Picture, hash};
 /// Covers decode to this many pixels a side; the largest place one shows
 /// is the Now playing panel, 32 columns of half blocks.
 pub const SIZE: u32 = 64;
+/// Terminals that show real images get the cover at most this large.
+const LARGEST: u32 = 640;
+
+/// A loaded cover: small for half blocks, and square at full size for
+/// terminals that draw images.
+pub struct Art {
+    pub picture: Picture,
+    pub image: image::RgbImage,
+}
 
 /// Loads the cover `art` names: an https URL, fetched once and then read
 /// from `dir`, or an audio file whose tags hold the picture.
-pub fn load(art: &str, dir: &Path, client: &HttpClient, runtime: &tokio::runtime::Runtime) -> Result<Picture> {
+pub fn load(art: &str, dir: &Path, client: &HttpClient, runtime: &tokio::runtime::Runtime) -> Result<Art> {
     let bytes = if art.starts_with("https://") {
         let file = dir.join(format!("{:016x}", hash(art)));
         match std::fs::read(&file) {
@@ -59,7 +68,7 @@ fn embedded(path: &Path) -> Result<Vec<u8>> {
 
 /// A square picture from an image: black bars trimmed (YouTube's 4:3
 /// thumbnails letterbox their videos), then the middle square.
-pub fn decode(bytes: &[u8]) -> Result<Picture> {
+pub fn decode(bytes: &[u8]) -> Result<Art> {
     let image = image::load_from_memory(bytes).context("cannot read the cover")?.into_rgb8();
     let (width, height) = image.dimensions();
     let dark = |y: u32| (0..width).all(|x| image.get_pixel(x, y).0.iter().all(|&c| c < 16));
@@ -70,7 +79,9 @@ pub fn decode(bytes: &[u8]) -> Result<Picture> {
     let square =
         image::imageops::crop_imm(&image, (width - side) / 2, top + (rows - side) / 2, side, side).to_image();
     let small = image::imageops::resize(&square, SIZE, SIZE, FilterType::Triangle);
-    Ok(Picture { width: SIZE as u16, height: SIZE as u16, pixels: small.pixels().map(|p| p.0).collect() })
+    let picture = Picture { width: SIZE as u16, height: SIZE as u16, pixels: small.pixels().map(|p| p.0).collect() };
+    let image = if side > LARGEST { image::imageops::resize(&square, LARGEST, LARGEST, FilterType::Triangle) } else { square };
+    Ok(Art { picture, image })
 }
 
 #[cfg(test)]
@@ -96,7 +107,8 @@ mod tests {
 
     #[test]
     fn covers_lose_their_bars_and_become_square() {
-        let picture = decode(&png(&letterboxed())).unwrap();
+        let Art { picture, image } = decode(&png(&letterboxed())).unwrap();
+        assert_eq!(image.dimensions(), (8, 8));
         assert_eq!((picture.width, picture.height), (SIZE as u16, SIZE as u16));
         let at = |x: usize, y: usize| picture.pixels[y * SIZE as usize + x];
         // No black rows survive at the top or bottom.
@@ -109,8 +121,8 @@ mod tests {
         let path = crate::testutil::wav_with_cover("embedded-art", png(&letterboxed()));
         let client = HttpClient::new(None);
         let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
-        let picture = load(&path.to_string_lossy(), Path::new("unused"), &client, &runtime).unwrap();
-        assert_eq!(picture.pixels.len(), (SIZE * SIZE) as usize);
+        let art = load(&path.to_string_lossy(), Path::new("unused"), &client, &runtime).unwrap();
+        assert_eq!(art.picture.pixels.len(), (SIZE * SIZE) as usize);
     }
 
     #[test]
@@ -122,6 +134,12 @@ mod tests {
         let client = HttpClient::new(None);
         let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();
         assert!(load(url, &dir, &client, &runtime).is_ok());
+    }
+
+    #[test]
+    fn large_covers_are_kept_at_a_bounded_size() {
+        let big = RgbImage::from_pixel(1000, 1000, Rgb([90, 90, 90]));
+        assert_eq!(decode(&png(&big)).unwrap().image.dimensions(), (LARGEST, LARGEST));
     }
 
     #[test]

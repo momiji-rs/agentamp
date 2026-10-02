@@ -38,8 +38,11 @@ The controls use Nerd Font icons, as Omarchy's terminal font has them;
 `AGENTAMP_ICONS=plain` keeps to characters any monospace font draws.
 Covers come from Spotify's image server, YouTube's thumbnails and the
 pictures in a file's tags; downloaded ones are kept in
-`~/.cache/agentamp/art/`. They are drawn in half blocks, so any terminal
-with 24-bit colour shows them.
+`~/.cache/agentamp/art/`. Terminals that draw images show them sharp:
+kitty's graphics protocol (kitty, Ghostty), Sixel (foot) and iTerm2's
+(WezTerm, iTerm2). Elsewhere they are drawn in half blocks, which any
+terminal with 24-bit colour shows; `AGENTAMP_COVERS=blocks` asks for half
+blocks everywhere.
 `agentamp tui --frame 120x36` prints one frame as terminal output, for
 scripts, agents and screenshots.
 
