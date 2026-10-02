@@ -8,6 +8,7 @@ mod paths;
 mod queue;
 mod resolve;
 mod target;
+mod youtube;
 
 use std::process::{Command, ExitCode, Stdio};
 use std::time::{Duration, Instant};

@@ -4,9 +4,11 @@ use anyhow::{Result, bail};
 
 use crate::library;
 use crate::model::{Source, Track};
+use crate::paths::Paths;
 use crate::target::{self, Target};
+use crate::youtube;
 
-pub async fn tracks(target: &str) -> Result<Vec<Track>> {
+pub async fn tracks(target: &str, paths: &Paths) -> Result<Vec<Track>> {
     match target::parse(target)? {
         Target::File(path) => {
             Ok(vec![tokio::task::spawn_blocking(move || library::read(&path, Source::Local)).await?])
@@ -22,6 +24,6 @@ pub async fn tracks(target: &str) -> Result<Vec<Track>> {
             .await?
         }
         Target::Spotify { .. } => bail!("Spotify is not available yet"),
-        Target::Youtube(_) => bail!("YouTube is not available yet"),
+        Target::Youtube(url) => Ok(vec![youtube::fetch(&url, &paths.youtube_audio()).await?]),
     }
 }

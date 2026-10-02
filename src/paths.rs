@@ -37,6 +37,10 @@ impl Paths {
         self.runtime.join("agentamp.sock")
     }
 
+    pub fn youtube_audio(&self) -> PathBuf {
+        self.cache.join("youtube")
+    }
+
     pub fn log(&self) -> PathBuf {
         self.cache.join("agentamp.log")
     }

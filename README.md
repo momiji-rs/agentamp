@@ -27,6 +27,7 @@ not compile against vergen 9.1.
 
 ```sh
 agentamp play ~/Music/Album        # a folder, a file, or a link
+agentamp play yt: plastic love     # the first YouTube result
 agentamp add --next song.flac      # after the current track
 agentamp now                       # ▶ Title · Artist  1:23 / 4:29
 agentamp --json now                # the same, for scripts and agents
@@ -41,6 +42,11 @@ The first command starts a small background player, which keeps playing
 after the terminal closes. It listens on a Unix socket in the runtime
 directory (`$XDG_RUNTIME_DIR/agentamp.sock`) that only your user can open.
 `now` and `queue` never start it. Its log is `~/.cache/agentamp/agentamp.log`.
+
+YouTube links and `yt:` searches go through the installed `yt-dlp`. AgentAmp
+downloads the AAC audio track once into `~/.cache/agentamp/youtube/` and
+plays the file from there. This is for personal listening; downloading may
+breach YouTube's terms. `AGENTAMP_YTDLP` points at another yt-dlp.
 
 `AGENTAMP_HOME=<dir>` keeps every file under one directory, and
 `AGENTAMP_AUDIO=null` plays silently while keeping time; the tests use both.

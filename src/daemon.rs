@@ -33,7 +33,7 @@ pub async fn run(paths: Paths) -> Result<()> {
     let accept = async {
         loop {
             let (stream, _) = listener.accept().await?;
-            tokio::spawn(serve(stream, tx.clone()));
+            tokio::spawn(serve(stream, tx.clone(), paths.clone()));
         }
         #[allow(unreachable_code)]
         Ok::<(), std::io::Error>(())
@@ -63,12 +63,12 @@ fn bind(socket: &Path) -> Result<UnixListener> {
     Ok(listener)
 }
 
-async fn serve(stream: UnixStream, tx: mpsc::UnboundedSender<Msg>) {
+async fn serve(stream: UnixStream, tx: mpsc::UnboundedSender<Msg>, paths: Paths) {
     let (read, mut write) = stream.into_split();
     let mut lines = BufReader::new(read).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let response = match serde_json::from_str::<Request>(&line) {
-            Ok(request) => handle(request, &tx).await,
+            Ok(request) => handle(request, &tx, &paths).await,
             Err(e) => Response::error(format!("not a request: {e}")),
         };
         let mut out = serde_json::to_string(&response).unwrap_or_default();
@@ -79,7 +79,7 @@ async fn serve(stream: UnixStream, tx: mpsc::UnboundedSender<Msg>) {
     }
 }
 
-async fn handle(request: Request, tx: &mpsc::UnboundedSender<Msg>) -> Response {
+async fn handle(request: Request, tx: &mpsc::UnboundedSender<Msg>, paths: &Paths) -> Response {
     let (reply, answer) = oneshot::channel();
     let msg = match request {
         Request::Play { target } | Request::Add { target, .. } if target.trim().is_empty() => {
@@ -91,7 +91,7 @@ async fn handle(request: Request, tx: &mpsc::UnboundedSender<Msg>) -> Response {
                 Request::Add { next: true, .. } => Mode::Next,
                 _ => Mode::Append,
             };
-            match resolve::tracks(target).await {
+            match resolve::tracks(target, paths).await {
                 Ok(tracks) => Msg::Enqueue { tracks, mode, reply },
                 Err(e) => {
                     warn!("cannot play {target}: {e:#}");

@@ -126,3 +126,63 @@ fn bad_targets_are_reported() {
     assert!(!ok);
     assert!(err.contains("nothing to play"), "{err}");
 }
+
+/// A stand-in for yt-dlp that "downloads" a silent WAV and prints what the
+/// real one prints, so the test needs no network.
+fn fake_yt_dlp(home: &Home) -> PathBuf {
+    let audio = home.0.join("fixture.wav");
+    wav(&audio, 60);
+    let script = home.0.join("yt-dlp");
+    std::fs::write(
+        &script,
+        format!(
+            r#"#!/bin/sh
+echo "$@" >> "{log}"
+for last; do :; done
+case "$last" in *missing*) echo "ERROR: [youtube] missing: Video unavailable" >&2; exit 1;; esac
+while [ "$1" != "-o" ]; do shift; done
+out=$(echo "$2" | sed 's/%(id)s/abc123/; s/%(ext)s/m4a/')
+cp "{audio}" "$out"
+printf '{{"id": "abc123", "title": "City Pop Mix", "uploader": "Night Tempo", "duration": 60, "filepath": "%s", "webpage_url": "https://www.youtube.com/watch?v=abc123"}}\n' "$out"
+"#,
+            log = home.0.join("yt-dlp.log").display(),
+            audio = audio.display()
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    script
+}
+
+#[test]
+fn youtube_searches_download_into_the_cache() {
+    let home = Home::new("youtube");
+    let script = fake_yt_dlp(&home);
+    let run = |args: &[&str]| {
+        let out = Command::new(env!("CARGO_BIN_EXE_agentamp"))
+            .args(args)
+            .env("AGENTAMP_HOME", &home.0)
+            .env("AGENTAMP_AUDIO", "null")
+            .env("AGENTAMP_YTDLP", &script)
+            .output()
+            .unwrap();
+        (out.status.success(), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
+    };
+    let (ok, out, err) = run(&["--json", "play", "yt:", "night", "tempo"]);
+    assert!(ok, "{err}");
+    let status: serde_json::Value = serde_json::from_str(&out).unwrap();
+    let track = &status["status"]["track"];
+    assert_eq!(track["source"], "youtube");
+    assert_eq!(track["title"], "City Pop Mix");
+    assert_eq!(track["link"], "https://www.youtube.com/watch?v=abc123");
+    assert!(home.0.join("cache/youtube/abc123.m4a").exists());
+
+    let calls = std::fs::read_to_string(home.0.join("yt-dlp.log")).unwrap();
+    assert!(calls.contains("-f bestaudio[ext=m4a]"), "{calls}");
+    assert!(calls.trim_end().ends_with("-- ytsearch1:night tempo"), "{calls}");
+
+    let (ok, _, err) = run(&["add", "https://youtu.be/missing"]);
+    assert!(!ok);
+    assert!(err.contains("Video unavailable"), "{err}");
+}
