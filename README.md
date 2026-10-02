@@ -26,6 +26,8 @@ not compile against vergen 9.1.
 ## Use
 
 ```sh
+agentamp login                     # once, for Spotify
+agentamp play https://open.spotify.com/album/…
 agentamp play ~/Music/Album        # a folder, a file, or a link
 agentamp play yt: plastic love     # the first YouTube result
 agentamp add --next song.flac      # after the current track
@@ -42,6 +44,15 @@ The first command starts a small background player, which keeps playing
 after the terminal closes. It listens on a Unix socket in the runtime
 directory (`$XDG_RUNTIME_DIR/agentamp.sock`) that only your user can open.
 `now` and `queue` never start it. Its log is `~/.cache/agentamp/agentamp.log`.
+
+Spotify needs a Premium account. `agentamp login` opens Spotify's sign-in
+page in the browser and keeps librespot's reusable credential in
+`~/.config/agentamp/credentials.json`, in a directory only your user can
+read; `agentamp logout` deletes it. Track, album and playlist links and
+`spotify:` URIs play. Spotify audio is never saved as music files: librespot
+keeps up to 2 GiB of it in its own encrypted cache
+(`~/.cache/agentamp/spotify-audio/`), so songs heard again are not
+downloaded again.
 
 YouTube links and `yt:` searches go through the installed `yt-dlp`. AgentAmp
 downloads the AAC audio track once into `~/.cache/agentamp/youtube/` and

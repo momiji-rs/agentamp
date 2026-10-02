@@ -68,6 +68,9 @@ pub struct Status {
     pub position_ms: u32,
     pub volume: u8,
     pub queue_len: usize,
+    /// Why playback stopped by itself, until the next track starts.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
 }
 
 /// `m:ss`, or `h:mm:ss` from an hour up.
@@ -85,7 +88,10 @@ impl Status {
     /// One line for a terminal or a status bar.
     pub fn line(&self) -> String {
         let Some(track) = &self.track else {
-            return "■ Nothing playing".into();
+            return match &self.error {
+                Some(error) => format!("■ Stopped: {error}"),
+                None => "■ Nothing playing".into(),
+            };
         };
         let icon = match self.state {
             State::Playing => "▶",
@@ -123,6 +129,7 @@ mod tests {
             position_ms: 83_000,
             volume: 80,
             queue_len: 0,
+            error: None,
         };
         assert_eq!(status.line(), "▶ 晴天 · 周杰倫  1:23 / 4:29");
     }
@@ -135,6 +142,7 @@ mod tests {
             position_ms: 0,
             volume: 80,
             queue_len: 0,
+            error: None,
         };
         assert_eq!(status.line(), "■ Nothing playing");
     }

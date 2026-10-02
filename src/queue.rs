@@ -50,6 +50,16 @@ impl Queue {
     pub fn clear(&mut self) {
         self.upcoming.clear();
     }
+
+    /// Fills in details that arrived after the track was queued.
+    pub fn update(&mut self, resolved: &Track) {
+        let same = |t: &&mut Track| t.uri == resolved.uri && t.source == resolved.source;
+        for track in self.current.iter_mut().chain(self.upcoming.iter_mut()).filter(same) {
+            let link = track.link.take();
+            *track = resolved.clone();
+            track.link = track.link.take().or(link);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -105,5 +115,20 @@ mod tests {
         while q.advance().is_some() {}
         assert_eq!(q.history.len(), HISTORY);
         assert_eq!(q.history.back().unwrap().uri, (HISTORY + 9).to_string());
+    }
+
+    #[test]
+    fn update_fills_every_copy_and_keeps_the_link() {
+        let mut q = Queue::default();
+        let mut placeholder = t("a");
+        placeholder.link = Some("https://youtu.be/x".into());
+        replace(&mut q, vec![placeholder.clone(), t("b"), placeholder]);
+        let mut resolved = t("a");
+        resolved.title = "Song".into();
+        q.update(&resolved);
+        assert_eq!(q.current.as_ref().unwrap().title, "Song");
+        assert_eq!(q.upcoming[1].title, "Song");
+        assert_eq!(q.upcoming[1].link.as_deref(), Some("https://youtu.be/x"));
+        assert_eq!(q.upcoming[0].title, "b");
     }
 }

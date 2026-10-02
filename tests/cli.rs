@@ -54,9 +54,7 @@ fn wav(path: &Path, seconds: u32) {
     out.extend_from_slice(b"RIFF");
     out.extend_from_slice(&(36 + data).to_le_bytes());
     out.extend_from_slice(b"WAVEfmt ");
-    for v in [16u32] {
-        out.extend_from_slice(&v.to_le_bytes());
-    }
+    out.extend_from_slice(&16u32.to_le_bytes());
     for v in [1u16, 1] {
         out.extend_from_slice(&v.to_le_bytes());
     }
@@ -125,6 +123,17 @@ fn bad_targets_are_reported() {
     let (ok, _, err) = home.run(&["add"]);
     assert!(!ok);
     assert!(err.contains("nothing to play"), "{err}");
+}
+
+#[test]
+fn spotify_asks_for_a_sign_in_first() {
+    let home = Home::new("spotify_sign_in");
+    let (ok, _, err) = home.run(&["play", "https://open.spotify.com/track/4uLU6hMCjMI75M1A2tKUQC"]);
+    assert!(!ok);
+    assert!(err.contains("agentamp login"), "{err}");
+    let (ok, out, _) = home.run(&["logout"]);
+    assert!(ok);
+    assert_eq!(out.trim(), "Not signed in.");
 }
 
 /// A stand-in for yt-dlp that "downloads" a silent WAV and prints what the

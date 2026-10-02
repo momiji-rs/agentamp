@@ -7,6 +7,7 @@ mod model;
 mod paths;
 mod queue;
 mod resolve;
+mod spotify;
 mod target;
 mod youtube;
 
@@ -61,6 +62,10 @@ enum Cmd {
     Volume { percent: u8 },
     /// Jump to a position in seconds, or m:ss.
     Seek { position: String },
+    /// Sign in to Spotify (Premium) in the browser.
+    Login,
+    /// Forget the Spotify sign-in.
+    Logout,
     /// Run the player in the foreground (it starts by itself otherwise).
     Daemon,
     /// Stop the background player.
@@ -82,6 +87,20 @@ fn run(cli: Cli) -> Result<()> {
     let paths = Paths::new()?;
     let request = match cli.command {
         Cmd::Daemon => return run_daemon(paths),
+        Cmd::Login => {
+            let name = spotify::login(&paths)?;
+            println!("Signed in to Spotify as {name}.");
+            // A running daemon keeps its old session; the next start reads this one.
+            if paths.socket().exists() {
+                println!("Run `agentamp quit` so the player picks up the new sign-in.");
+            }
+            return Ok(());
+        }
+        Cmd::Logout => {
+            let removed = spotify::logout(&paths)?;
+            println!("{}", if removed { "Signed out of Spotify." } else { "Not signed in." });
+            return Ok(());
+        }
         Cmd::Play { target } => Request::Play { target: target.join(" ") },
         Cmd::Add { target, next } => Request::Add { target: target.join(" "), next },
         Cmd::Pause => Request::Pause,
@@ -135,6 +154,7 @@ fn send(paths: &Paths, request: &Request, autostart: bool) -> Result<Value> {
                         position_ms: 0,
                         volume: 0,
                         queue_len: 0,
+                        error: None,
                     })?);
                 }
                 if let Request::Queue = request {

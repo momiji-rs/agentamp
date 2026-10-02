@@ -9,12 +9,14 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, anyhow};
 use rodio::{Decoder, OutputStreamBuilder, Sink, mixer::Mixer};
 
+use crate::model::Track;
+
 /// Called once when a loaded track finishes or is stopped.
 pub type OnEnd = Box<dyn FnOnce() + Send>;
 
 pub trait Deck: Send {
-    /// Starts `path` from the beginning, replacing whatever played.
-    fn load(&mut self, path: &Path, duration_ms: u32, on_end: OnEnd) -> Result<()>;
+    /// Starts `track` from the beginning, replacing whatever played.
+    fn load(&mut self, track: &Track, on_end: OnEnd) -> Result<()>;
     fn pause(&mut self);
     fn resume(&mut self);
     fn stop(&mut self);
@@ -75,8 +77,9 @@ impl RodioDeck {
 }
 
 impl Deck for RodioDeck {
-    fn load(&mut self, path: &Path, _duration_ms: u32, on_end: OnEnd) -> Result<()> {
+    fn load(&mut self, track: &Track, on_end: OnEnd) -> Result<()> {
         self.stop();
+        let path = Path::new(&track.uri);
         let file = File::open(path).with_context(|| format!("cannot open {}", path.display()))?;
         let decoder = Decoder::try_from(file).with_context(|| format!("cannot decode {}", path.display()))?;
         let sink = Arc::new(Sink::connect_new(&self.mixer()?));
@@ -144,7 +147,8 @@ pub struct NullDeck {
 }
 
 impl Deck for NullDeck {
-    fn load(&mut self, _path: &Path, duration_ms: u32, on_end: OnEnd) -> Result<()> {
+    fn load(&mut self, track: &Track, on_end: OnEnd) -> Result<()> {
+        let duration_ms = track.duration_ms;
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
         self.started = Some(Instant::now());
         self.offset_ms = 0;

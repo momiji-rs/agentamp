@@ -2,6 +2,7 @@
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
+use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
 use log::{info, warn};
@@ -14,6 +15,7 @@ use crate::engine::{Engine, Mode, Msg};
 use crate::ipc::{Request, Response};
 use crate::paths::Paths;
 use crate::resolve;
+use crate::spotify::Spotify;
 
 const DEFAULT_VOLUME: u8 = 80;
 
@@ -27,13 +29,14 @@ pub async fn run(paths: Paths) -> Result<()> {
         Ok("null") => Box::new(NullDeck::default()),
         _ => Box::new(RodioDeck::new(DEFAULT_VOLUME)),
     };
+    let spotify = Spotify::new(paths.clone());
     let (tx, rx) = mpsc::unbounded_channel();
-    let engine = tokio::spawn(Engine::new(files, DEFAULT_VOLUME, tx.clone()).run(rx));
+    let engine = tokio::spawn(Engine::new(files, DEFAULT_VOLUME, spotify.clone(), tx.clone()).run(rx));
 
     let accept = async {
         loop {
             let (stream, _) = listener.accept().await?;
-            tokio::spawn(serve(stream, tx.clone(), paths.clone()));
+            tokio::spawn(serve(stream, tx.clone(), paths.clone(), spotify.clone()));
         }
         #[allow(unreachable_code)]
         Ok::<(), std::io::Error>(())
@@ -63,12 +66,12 @@ fn bind(socket: &Path) -> Result<UnixListener> {
     Ok(listener)
 }
 
-async fn serve(stream: UnixStream, tx: mpsc::UnboundedSender<Msg>, paths: Paths) {
+async fn serve(stream: UnixStream, tx: mpsc::UnboundedSender<Msg>, paths: Paths, spotify: Arc<Spotify>) {
     let (read, mut write) = stream.into_split();
     let mut lines = BufReader::new(read).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let response = match serde_json::from_str::<Request>(&line) {
-            Ok(request) => handle(request, &tx, &paths).await,
+            Ok(request) => handle(request, &tx, &paths, &spotify).await,
             Err(e) => Response::error(format!("not a request: {e}")),
         };
         let mut out = serde_json::to_string(&response).unwrap_or_default();
@@ -79,7 +82,12 @@ async fn serve(stream: UnixStream, tx: mpsc::UnboundedSender<Msg>, paths: Paths)
     }
 }
 
-async fn handle(request: Request, tx: &mpsc::UnboundedSender<Msg>, paths: &Paths) -> Response {
+async fn handle(
+    request: Request,
+    tx: &mpsc::UnboundedSender<Msg>,
+    paths: &Paths,
+    spotify: &Arc<Spotify>,
+) -> Response {
     let (reply, answer) = oneshot::channel();
     let msg = match request {
         Request::Play { target } | Request::Add { target, .. } if target.trim().is_empty() => {
@@ -91,7 +99,7 @@ async fn handle(request: Request, tx: &mpsc::UnboundedSender<Msg>, paths: &Paths
                 Request::Add { next: true, .. } => Mode::Next,
                 _ => Mode::Append,
             };
-            match resolve::tracks(target, paths).await {
+            match resolve::tracks(target, paths, spotify, tx).await {
                 Ok(tracks) => Msg::Enqueue { tracks, mode, reply },
                 Err(e) => {
                     warn!("cannot play {target}: {e:#}");
