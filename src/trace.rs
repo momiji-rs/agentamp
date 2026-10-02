@@ -10,7 +10,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// When a step finished, in µs since 1970, and the step.
 type Marks = Mutex<Vec<(u128, String)>>;
 
-/// Marks kept until `flush`: writing each at once would slow what it times.
+/// Marks kept until `flush`, which the window calls once a frame is out:
+/// writing each at once would slow what it times.
 static MARKS: OnceLock<Option<Marks>> = OnceLock::new();
 
 fn marks() -> Option<&'static Marks> {

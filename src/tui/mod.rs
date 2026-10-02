@@ -104,6 +104,8 @@ fn event_loop(
             if crate::trace::enabled() {
                 let what = if view.status.track.is_some() { "playing" } else { "idle" };
                 crate::trace::mark(format!("frame {frames} {}us {what}", start.elapsed().as_micros()));
+                // Now, while nothing waits: a window closed by its terminal never returns.
+                crate::trace::flush();
             }
         }
         if !listening {
