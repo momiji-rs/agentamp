@@ -5,14 +5,16 @@ use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
-use ratatui::widgets::{Block, Borders, Cell, Clear, Padding, Paragraph, Row, Table};
+use ratatui::widgets::{Block, Cell, Clear, Padding, Paragraph, Row, Table};
 
+use super::cover::Picture;
+use super::icons::{self, Icons};
 use crate::model::{Source, State, Status, Track, clock};
 
 const BG: Color = Color::Rgb(0, 0, 0);
 const PANEL: Color = Color::Rgb(18, 18, 18);
 const RAISED: Color = Color::Rgb(40, 40, 40);
-const BORDER: Color = Color::Rgb(40, 40, 40);
+const TRACK: Color = Color::Rgb(77, 77, 77);
 const TEXT: Color = Color::Rgb(255, 255, 255);
 const SUBDUED: Color = Color::Rgb(167, 167, 167);
 const FAINT: Color = Color::Rgb(100, 100, 100);
@@ -24,8 +26,9 @@ const FILES: Color = Color::Rgb(80, 155, 245);
 /// Below these widths the side panels give their room to the queue.
 const WITH_BOTH_PANELS: u16 = 110;
 const WITH_LIBRARY: u16 = 80;
-/// Two bars from half blocks: drawn by every terminal font, unlike U+23F8.
-const PAUSE: &str = "▐▌";
+/// Spotify caps its progress bar's width; so does the window.
+const MAX_PROGRESS: u16 = 72;
+const VOLUME_WIDTH: u16 = 14;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PromptKind {
@@ -50,6 +53,7 @@ pub struct View {
     pub message: Option<Result<String, String>>,
     /// A play or add is still being resolved.
     pub busy: bool,
+    pub icons: &'static Icons,
 }
 
 impl Default for View {
@@ -68,6 +72,7 @@ impl Default for View {
             prompt: None,
             message: None,
             busy: false,
+            icons: &icons::NERD,
         }
     }
 }
@@ -76,7 +81,7 @@ pub fn draw(frame: &mut Frame, view: &View) {
     let area = frame.area();
     frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
     let [main, player, footer] =
-        Layout::vertical([Constraint::Min(0), Constraint::Length(4), Constraint::Length(1)]).areas(area);
+        Layout::vertical([Constraint::Min(0), Constraint::Length(3), Constraint::Length(1)]).spacing(1).areas(area);
 
     let panels: Vec<Constraint> = if area.width >= WITH_BOTH_PANELS {
         vec![Constraint::Length(28), Constraint::Min(40), Constraint::Length(34)]
@@ -254,50 +259,68 @@ fn now_playing(frame: &mut Frame, area: Rect, view: &View) {
     frame.render_widget(Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: true }), details);
 }
 
+/// Spotify's player bar: what plays on the left with its cover, the
+/// transport and progress in the middle, the volume on the right.
 fn player_bar(frame: &mut Frame, area: Rect, view: &View) {
-    let block = Block::new()
-        .borders(Borders::TOP)
-        .border_style(Style::new().fg(BORDER))
-        .style(Style::new().bg(BG));
-    let inner = block.inner(area);
-    frame.render_widget(block, area);
+    frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
+    let inner = area.inner(ratatui::layout::Margin::new(1, 0));
     let [left, middle, right] =
-        Layout::horizontal([Constraint::Percentage(28), Constraint::Percentage(48), Constraint::Percentage(24)])
-            .spacing(2)
-            .areas(inner);
-
+        Layout::horizontal([Constraint::Fill(3), Constraint::Fill(4), Constraint::Fill(3)]).spacing(2).areas(inner);
     let status = &view.status;
-    let now = match &status.track {
-        Some(track) => vec![
-            Line::styled(track.title.clone(), Style::new().fg(TEXT).add_modifier(Modifier::BOLD)),
-            byline(track),
-        ],
-        None => vec![Line::styled("Not playing", Style::new().fg(SUBDUED))],
-    };
-    frame.render_widget(Paragraph::new(now), left);
+    let icons = view.icons;
 
-    let toggle = if status.state == State::Playing { PAUSE } else { "▶ " };
+    match &status.track {
+        Some(track) => {
+            // Three rows of half blocks are six pixels: square at 6 columns.
+            let [art, text] = Layout::horizontal([Constraint::Length(6), Constraint::Min(0)]).spacing(2).areas(left);
+            Picture::placeholder(cover_seed(track), 6, 6).draw(art, frame.buffer_mut());
+            let lines = vec![
+                Line::styled(track.title.clone(), Style::new().fg(TEXT).add_modifier(Modifier::BOLD)),
+                Line::styled(track.artist.clone(), Style::new().fg(SUBDUED)),
+                source_line(track.source),
+            ];
+            frame.render_widget(Paragraph::new(lines), text);
+        }
+        None => frame.render_widget(Paragraph::new(Line::styled("Not playing", Style::new().fg(SUBDUED))), left),
+    }
+
+    let idle = status.track.is_none();
+    let side = Style::new().fg(if idle { FAINT } else { SUBDUED });
+    let toggle = if status.state == State::Playing { icons.pause } else { icons.play };
+    let button = Style::new().fg(BG).bg(TEXT).add_modifier(Modifier::BOLD);
     let controls = Line::from(vec![
-        Span::styled("■", Style::new().fg(SUBDUED)),
-        Span::raw("    "),
-        Span::styled(format!(" {toggle} "), Style::new().fg(BG).bg(TEXT).add_modifier(Modifier::BOLD)),
-        Span::raw("    "),
-        Span::styled("▶▶", Style::new().fg(SUBDUED)),
+        Span::styled(icons.previous, side),
+        Span::raw("     "),
+        Span::styled(icons.cap_left, Style::new().fg(TEXT)),
+        Span::styled(format!(" {toggle} "), button),
+        Span::styled(icons.cap_right, Style::new().fg(TEXT)),
+        Span::raw("     "),
+        Span::styled(icons.next, side),
     ])
     .centered();
     let length = status.track.as_ref().map_or(0, |t| t.duration_ms);
-    let progress = bar(middle.width, status.position_ms, length);
+    let progress = bar(middle.width.min(MAX_PROGRESS), status.position_ms, length);
     frame.render_widget(Paragraph::new(vec![controls, progress]), middle);
 
-    let [level, rest] = meter(right.width.saturating_sub(9).min(16), u32::from(status.volume), 100);
-    let volume = Line::from(vec![
-        Span::styled("vol ", Style::new().fg(SUBDUED)),
-        level,
-        rest,
-        Span::styled(format!(" {:>3}%", status.volume), Style::new().fg(SUBDUED)),
-    ])
-    .right_aligned();
+    let icon = match status.volume {
+        0 => icons.volume_off,
+        1..=50 => icons.volume_low,
+        _ => icons.volume_high,
+    };
+    let [level, rest] = meter(right.width.saturating_sub(4).min(VOLUME_WIDTH), u32::from(status.volume), 100);
+    let volume = Line::from(vec![Span::styled(format!("{icon}  "), Style::new().fg(SUBDUED)), level, rest]).right_aligned();
     frame.render_widget(Paragraph::new(vec![Line::raw(""), volume]), right);
+}
+
+/// "● Spotify", in the source's colour.
+fn source_line(source: Source) -> Line<'static> {
+    let (name, color) = source_name(source);
+    Line::from(vec![Span::styled("● ", Style::new().fg(color)), Span::styled(name, Style::new().fg(FAINT))])
+}
+
+/// One album shares one stand-in cover.
+fn cover_seed(track: &Track) -> &str {
+    if track.album.is_empty() { &track.uri } else { &track.album }
 }
 
 /// "1:23 ━━━━━━━━━──────── 4:29", filling `width` cells.
@@ -321,7 +344,7 @@ fn meter(width: u16, value: u32, full: u32) -> [Span<'static>; 2] {
     let empty = usize::from(width) - filled;
     [
         Span::styled("━".repeat(filled), Style::new().fg(TEXT)),
-        Span::styled("━".repeat(empty), Style::new().fg(RAISED)),
+        Span::styled("━".repeat(empty), Style::new().fg(TRACK)),
     ]
 }
 
@@ -353,6 +376,7 @@ fn footer_line(frame: &mut Frame, area: Rect, view: &View) {
         for (k, what) in [
             ("space", "play/pause"),
             ("n", "next"),
+            ("b", "back"),
             ("s", "stop"),
             ("←→", "seek"),
             ("+-", "volume"),

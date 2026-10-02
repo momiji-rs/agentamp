@@ -88,7 +88,8 @@ fn wide_windows_show_library_queue_and_now_playing() {
         "5:42",
         "1:23",
         "5:34",
-        "80%",
+        icons::NERD.pause,
+        icons::NERD.volume_high,
     ] {
         assert!(screen.contains(expected), "missing {expected:?} in\n{screen}");
     }
@@ -221,4 +222,16 @@ fn the_album_column_waits_for_an_album() {
     let screen = text(&view, 140, 40);
     assert!(!screen.contains("Album"), "{screen}");
     assert!(screen.contains("Midnight Pretenders"), "{screen}");
+}
+
+#[test]
+fn plain_icons_for_fonts_without_nerd_glyphs() {
+    let mut view = demo();
+    view.icons = &icons::PLAIN;
+    view.status.state = State::Paused;
+    view.status.volume = 30;
+    let screen = text(&view, 120, 32);
+    assert!(screen.contains("|◀") && screen.contains("▶|") && screen.contains(" ▶ "), "{screen}");
+    assert!(!screen.contains(icons::NERD.play), "{screen}");
+    keep("plain-paused", &view, 120, 32);
 }

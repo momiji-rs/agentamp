@@ -2,6 +2,8 @@
 //! leaves the music playing.
 
 mod ansi;
+mod cover;
+mod icons;
 mod view;
 
 use std::sync::mpsc;
@@ -52,7 +54,7 @@ fn event_loop(
     jobs: &mpsc::Sender<Request>,
     updates: &mpsc::Receiver<Update>,
 ) -> Result<()> {
-    let mut view = View::default();
+    let mut view = View { icons: icons::from_env(), ..View::default() };
     let mut dirty = true;
     loop {
         while let Ok(update) = updates.try_recv() {
@@ -128,7 +130,7 @@ fn snapshot(paths: &Paths) -> Result<Update> {
 
 /// One frame of the window at `cols`×`rows`, as terminal bytes.
 pub fn frame(paths: &Paths, cols: u16, rows: u16) -> Result<String> {
-    let mut view = View::default();
+    let mut view = View { icons: icons::from_env(), ..View::default() };
     view.apply(snapshot(paths)?);
     render(&view, cols, rows)
 }
