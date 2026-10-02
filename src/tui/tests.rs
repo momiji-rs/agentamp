@@ -235,3 +235,12 @@ fn plain_icons_for_fonts_without_nerd_glyphs() {
     assert!(!screen.contains(icons::NERD.play), "{screen}");
     keep("plain-paused", &view, 120, 32);
 }
+
+#[test]
+fn now_playing_shows_a_square_cover() {
+    let view = demo();
+    let screen = text(&view, 140, 40);
+    let row = "▀".repeat(32);
+    // The panel is 32 columns inside; two columns per row make a square.
+    assert_eq!(screen.lines().filter(|l| l.contains(&row)).count(), 16, "{screen}");
+}

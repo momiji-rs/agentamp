@@ -13,7 +13,6 @@ use crate::model::{Source, State, Status, Track, clock};
 
 const BG: Color = Color::Rgb(0, 0, 0);
 const PANEL: Color = Color::Rgb(18, 18, 18);
-const RAISED: Color = Color::Rgb(40, 40, 40);
 const TRACK: Color = Color::Rgb(77, 77, 77);
 const TEXT: Color = Color::Rgb(255, 255, 255);
 const SUBDUED: Color = Color::Rgb(167, 167, 167);
@@ -230,20 +229,12 @@ fn now_playing(frame: &mut Frame, area: Rect, view: &View) {
         frame.render_widget(Paragraph::new(Line::styled("Nothing playing", Style::new().fg(FAINT))), inner);
         return;
     };
-    // Cells are about twice as tall as wide, so half the width is square.
-    let side = (inner.width / 2).min(inner.height.saturating_sub(6));
-    let [art, details] = Layout::vertical([Constraint::Length(side), Constraint::Min(0)]).spacing(1).areas(inner);
-    let (_, color) = source_name(track.source);
-    // Cover art comes later; until then a tile in the source's colour.
-    frame.render_widget(Block::new().style(Style::new().bg(RAISED)), art);
-    if side > 0 {
-        let middle = Rect { y: art.y + side / 2, height: 1, ..art };
-        let (name, _) = source_name(track.source);
-        frame.render_widget(
-            Paragraph::new(Line::styled(name, Style::new().fg(color).bg(RAISED)).centered()),
-            middle,
-        );
-    }
+    // Cells are about twice as tall as wide, so a square is twice as many
+    // columns as rows, and each row holds two pixels.
+    let rows = (inner.width / 2).min(inner.height.saturating_sub(6));
+    let [art, details] = Layout::vertical([Constraint::Length(rows), Constraint::Min(0)]).spacing(1).areas(inner);
+    let art = Rect { width: rows * 2, ..art };
+    Picture::placeholder(cover_seed(track), art.width, art.width).draw(art, frame.buffer_mut());
 
     let mut lines = vec![
         Line::styled(track.title.clone(), Style::new().fg(TEXT).add_modifier(Modifier::BOLD)),
