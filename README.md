@@ -22,3 +22,25 @@ cargo test
 
 `Cargo.lock` keeps `vergen` at 9.0.6: librespot-core 0.8's build script does
 not compile against vergen 9.1.
+
+## Use
+
+```sh
+agentamp play ~/Music/Album        # a folder, a file, or a link
+agentamp add --next song.flac      # after the current track
+agentamp now                       # ▶ Title · Artist  1:23 / 4:29
+agentamp --json now                # the same, for scripts and agents
+agentamp pause | resume | toggle | next | stop | clear
+agentamp queue
+agentamp seek 1:30
+agentamp volume 40
+agentamp quit
+```
+
+The first command starts a small background player, which keeps playing
+after the terminal closes. It listens on a Unix socket in the runtime
+directory (`$XDG_RUNTIME_DIR/agentamp.sock`) that only your user can open.
+`now` and `queue` never start it. Its log is `~/.cache/agentamp/agentamp.log`.
+
+`AGENTAMP_HOME=<dir>` keeps every file under one directory, and
+`AGENTAMP_AUDIO=null` plays silently while keeping time; the tests use both.

@@ -6,8 +6,6 @@ use anyhow::{Context, Result};
 
 #[derive(Clone, Debug)]
 pub struct Paths {
-    /// Settings and the Spotify playback credential.
-    pub config: PathBuf,
     /// Spotify's encrypted audio cache and downloaded YouTube audio.
     pub cache: PathBuf,
     /// The daemon's socket.
@@ -19,7 +17,6 @@ impl Paths {
         if let Some(root) = std::env::var_os("AGENTAMP_HOME") {
             let root = PathBuf::from(root);
             return Ok(Self {
-                config: root.join("config"),
                 cache: root.join("cache"),
                 runtime: root.join("run"),
             });
@@ -31,7 +28,6 @@ impl Paths {
             .map(PathBuf::from)
             .unwrap_or_else(|| dirs.cache_dir().join("run"));
         Ok(Self {
-            config: dirs.config_dir().to_path_buf(),
             cache: dirs.cache_dir().to_path_buf(),
             runtime,
         })
@@ -43,13 +39,5 @@ impl Paths {
 
     pub fn log(&self) -> PathBuf {
         self.cache.join("agentamp.log")
-    }
-
-    pub fn spotify_audio(&self) -> PathBuf {
-        self.cache.join("spotify-audio")
-    }
-
-    pub fn youtube_audio(&self) -> PathBuf {
-        self.cache.join("youtube")
     }
 }
