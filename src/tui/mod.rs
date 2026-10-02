@@ -24,6 +24,10 @@ use view::{Cover, Prompt, PromptKind};
 
 /// How often the window asks the daemon what it is doing.
 const POLL: Duration = Duration::from_millis(500);
+/// How long the first frame may wait for the player's state and its cover,
+/// so the window opens complete instead of filling in. Both come from this
+/// machine in a few milliseconds; a cover from the network is not waited for.
+const FIRST_FRAME: Duration = Duration::from_millis(50);
 const SEEK_STEP_MS: u32 = 10_000;
 const VOLUME_STEP: u8 = 5;
 
@@ -86,11 +90,14 @@ fn event_loop(
     let mut frames = 0u32;
     let mut keys = 0u32;
     let mut listening = false;
+    let opened = std::time::Instant::now();
+    let mut heard = false;
     loop {
         for art in view.wanted() {
             covers.send(art)?;
         }
-        if dirty {
+        let waiting = frames == 0 && !heard_all(heard, &view) && opened.elapsed() < FIRST_FRAME;
+        if dirty && !waiting {
             let start = std::time::Instant::now();
             terminal.draw(|frame| {
                 view::draw(frame, &view);
@@ -113,7 +120,15 @@ fn event_loop(
         }
         // Sleeps until the daemon or the terminal says something, then
         // takes all that came in, so one frame shows it all.
-        for wake in std::iter::once(wakes.recv()?).chain(std::iter::from_fn(|| wakes.try_recv().ok())) {
+        let wake = if waiting {
+            match wakes.recv_timeout(FIRST_FRAME.saturating_sub(opened.elapsed())) {
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                wake => wake?,
+            }
+        } else {
+            wakes.recv()?
+        };
+        for wake in std::iter::once(wake).chain(std::iter::from_fn(|| wakes.try_recv().ok())) {
             match wake {
                 Wake::Update(mut update) => {
                     if crate::trace::enabled() {
@@ -126,6 +141,7 @@ fn event_loop(
                     if let (Some(graphics), Update::Art { art, loaded: Some(loaded) }) = (graphics.as_mut(), &mut update) {
                         graphics.offer(art.clone(), std::mem::take(&mut loaded.image));
                     }
+                    heard |= matches!(update, Update::Snapshot { .. });
                     dirty |= view.apply(update);
                 }
                 Wake::Input(Event::Key(key)) if key.kind == KeyEventKind::Press => {
@@ -143,6 +159,13 @@ fn event_loop(
             }
         }
     }
+}
+
+/// Whether the window has what its first frame should show: the player's
+/// state and, when something plays, its cover or word that there is none.
+fn heard_all(heard: bool, view: &View) -> bool {
+    let art = view.status.track.as_ref().and_then(|t| t.art.as_ref());
+    heard && !art.is_some_and(|art| matches!(view.covers.get(art), Some(Cover::Loading) | None))
 }
 
 /// Hands the terminal's events to the window as they come.

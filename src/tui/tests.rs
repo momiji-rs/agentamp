@@ -340,3 +340,22 @@ fn the_first_snapshot_does_not_wait_for_the_poll() {
     let first = received.recv_timeout(POLL / 5).expect("no snapshot before the first poll");
     assert!(matches!(first, Wake::Update(Update::Snapshot { .. })));
 }
+
+#[test]
+fn the_first_frame_waits_for_the_state_and_its_cover() {
+    // Nothing heard yet: an empty frame would only flash.
+    assert!(!heard_all(false, &View::default()));
+    // Nothing plays, or it has no art: the state is all there is.
+    assert!(heard_all(true, &View::default()));
+    assert!(heard_all(true, &demo()));
+
+    let mut view = demo();
+    let art = "https://i.scdn.co/image/pocket-park".to_string();
+    view.status.track.as_mut().unwrap().art = Some(art.clone());
+    assert!(!heard_all(true, &view));
+    view.wanted();
+    assert!(!heard_all(true, &view), "the cover is still loading");
+    // Loaded or failed, the frame can go.
+    view.apply(Update::Art { art, loaded: None });
+    assert!(heard_all(true, &view));
+}
