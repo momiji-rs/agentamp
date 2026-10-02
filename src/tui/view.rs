@@ -1,7 +1,10 @@
 //! What the terminal window shows, drawn from one snapshot of the player.
 //! Drawing is pure: the same view and size always give the same cells.
 
+use std::collections::HashMap;
+
 use ratatui::Frame;
+use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span, Text};
@@ -41,6 +44,15 @@ pub struct Prompt {
     pub text: String,
 }
 
+/// A track's cover, by its `art`.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Cover {
+    Loading,
+    /// It could not be fetched or read; the stand-in stays.
+    Missing,
+    Ready(Picture),
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct View {
     pub status: Status,
@@ -53,6 +65,7 @@ pub struct View {
     /// A play or add is still being resolved.
     pub busy: bool,
     pub icons: &'static Icons,
+    pub covers: HashMap<String, Cover>,
 }
 
 impl Default for View {
@@ -72,6 +85,7 @@ impl Default for View {
             message: None,
             busy: false,
             icons: &icons::NERD,
+            covers: HashMap::new(),
         }
     }
 }
@@ -234,7 +248,7 @@ fn now_playing(frame: &mut Frame, area: Rect, view: &View) {
     let rows = (inner.width / 2).min(inner.height.saturating_sub(6));
     let [art, details] = Layout::vertical([Constraint::Length(rows), Constraint::Min(0)]).spacing(1).areas(inner);
     let art = Rect { width: rows * 2, ..art };
-    Picture::placeholder(cover_seed(track), art.width, art.width).draw(art, frame.buffer_mut());
+    cover(view, track, art, frame.buffer_mut());
 
     let mut lines = vec![
         Line::styled(track.title.clone(), Style::new().fg(TEXT).add_modifier(Modifier::BOLD)),
@@ -264,7 +278,7 @@ fn player_bar(frame: &mut Frame, area: Rect, view: &View) {
         Some(track) => {
             // Three rows of half blocks are six pixels: square at 6 columns.
             let [art, text] = Layout::horizontal([Constraint::Length(6), Constraint::Min(0)]).spacing(2).areas(left);
-            Picture::placeholder(cover_seed(track), 6, 6).draw(art, frame.buffer_mut());
+            cover(view, track, art, frame.buffer_mut());
             let lines = vec![
                 Line::styled(track.title.clone(), Style::new().fg(TEXT).add_modifier(Modifier::BOLD)),
                 Line::styled(track.artist.clone(), Style::new().fg(SUBDUED)),
@@ -307,6 +321,14 @@ fn player_bar(frame: &mut Frame, area: Rect, view: &View) {
 fn source_line(source: Source) -> Line<'static> {
     let (name, color) = source_name(source);
     Line::from(vec![Span::styled("● ", Style::new().fg(color)), Span::styled(name, Style::new().fg(FAINT))])
+}
+
+/// The track's cover once it has loaded, and a stand-in until then.
+fn cover(view: &View, track: &Track, area: Rect, buffer: &mut Buffer) {
+    match track.art.as_ref().and_then(|art| view.covers.get(art)) {
+        Some(Cover::Ready(picture)) => picture.draw(area, buffer),
+        _ => Picture::placeholder(cover_seed(track), area.width, area.height * 2).draw(area, buffer),
+    }
 }
 
 /// One album shares one stand-in cover.

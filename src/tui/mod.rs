@@ -2,6 +2,7 @@
 //! leaves the music playing.
 
 mod ansi;
+mod art;
 mod cover;
 mod icons;
 mod view;
@@ -18,7 +19,7 @@ use crate::ipc::Request;
 use crate::model::{State, Status, Track};
 use crate::paths::Paths;
 pub use view::View;
-use view::{Prompt, PromptKind};
+use view::{Cover, Prompt, PromptKind};
 
 /// How often the window asks the daemon what it is doing.
 const POLL: Duration = Duration::from_millis(500);
@@ -31,6 +32,8 @@ const VOLUME_STEP: u8 = 5;
 enum Update {
     Snapshot { status: Box<Status>, upcoming: Vec<Track>, history: Vec<Track> },
     Answer(Result<String, String>),
+    /// A cover loaded, or failed to.
+    Art { art: String, picture: Option<cover::Picture> },
 }
 
 #[derive(Debug, PartialEq)]
@@ -42,9 +45,13 @@ enum Command {
 pub fn run(paths: Paths) -> Result<()> {
     let (jobs, requests) = mpsc::channel();
     let (updates, received) = mpsc::channel();
+    let (covers, wanted) = mpsc::channel();
+    let dir = paths.art();
+    let art_updates = updates.clone();
     std::thread::Builder::new().name("daemon-link".into()).spawn(move || link(paths, requests, updates))?;
+    std::thread::Builder::new().name("cover-art".into()).spawn(move || load_art(&dir, wanted, art_updates))?;
     let mut terminal = ratatui::init();
-    let result = event_loop(&mut terminal, &jobs, &received);
+    let result = event_loop(&mut terminal, &jobs, &covers, &received);
     ratatui::restore();
     result
 }
@@ -52,6 +59,7 @@ pub fn run(paths: Paths) -> Result<()> {
 fn event_loop(
     terminal: &mut ratatui::DefaultTerminal,
     jobs: &mpsc::Sender<Request>,
+    covers: &mpsc::Sender<String>,
     updates: &mpsc::Receiver<Update>,
 ) -> Result<()> {
     let mut view = View { icons: icons::from_env(), ..View::default() };
@@ -59,6 +67,9 @@ fn event_loop(
     loop {
         while let Ok(update) = updates.try_recv() {
             dirty |= view.apply(update);
+        }
+        for art in view.wanted() {
+            covers.send(art)?;
         }
         if dirty {
             terminal.draw(|frame| view::draw(frame, &view))?;
@@ -110,6 +121,18 @@ fn link(paths: Paths, requests: mpsc::Receiver<Request>, updates: mpsc::Sender<U
     }
 }
 
+/// Loads covers one at a time as the window asks for them.
+fn load_art(dir: &std::path::Path, wanted: mpsc::Receiver<String>, updates: mpsc::Sender<Update>) {
+    let client = librespot_core::http_client::HttpClient::new(None);
+    let Ok(runtime) = tokio::runtime::Builder::new_current_thread().enable_all().build() else { return };
+    for art in wanted {
+        let picture = art::load(&art, dir, &client, &runtime).inspect_err(|e| log::debug!("cover {art}: {e:#}")).ok();
+        if updates.send(Update::Art { art, picture }).is_err() {
+            return;
+        }
+    }
+}
+
 /// What the footer says about a request: what play and add found, and any
 /// error. The window already shows what a control did.
 fn answer(paths: &Paths, request: &Request) -> Result<String, String> {
@@ -128,10 +151,17 @@ fn snapshot(paths: &Paths) -> Result<Update> {
     Ok(Update::Snapshot { status, upcoming: tracks("upcoming"), history: tracks("history") })
 }
 
-/// One frame of the window at `cols`×`rows`, as terminal bytes.
+/// One frame of the window at `cols`×`rows`, as terminal bytes, with the
+/// playing track's cover loaded first.
 pub fn frame(paths: &Paths, cols: u16, rows: u16) -> Result<String> {
     let mut view = View { icons: icons::from_env(), ..View::default() };
     view.apply(snapshot(paths)?);
+    let client = librespot_core::http_client::HttpClient::new(None);
+    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+    for art in view.wanted() {
+        let picture = art::load(&art, &paths.art(), &client, &runtime).ok();
+        view.apply(Update::Art { art, picture });
+    }
     render(&view, cols, rows)
 }
 
@@ -153,6 +183,10 @@ impl View {
                 self.history = history;
                 changed
             }
+            Update::Art { art, picture } => {
+                self.covers.insert(art, picture.map_or(Cover::Missing, Cover::Ready));
+                true
+            }
             Update::Answer(answer) => {
                 self.busy = false;
                 self.message = match answer {
@@ -162,6 +196,20 @@ impl View {
                 true
             }
         }
+    }
+
+    /// Covers to load: the playing track's, once. Covers of tracks no longer
+    /// in the queue are forgotten; the disk cache keeps them.
+    fn wanted(&mut self) -> Vec<String> {
+        let Some(art) = self.status.track.as_ref().and_then(|t| t.art.clone()) else { return Vec::new() };
+        if self.covers.contains_key(&art) {
+            return Vec::new();
+        }
+        let keep: std::collections::HashSet<&String> =
+            self.upcoming.iter().chain(&self.history).filter_map(|t| t.art.as_ref()).collect();
+        self.covers.retain(|key, _| keep.contains(key));
+        self.covers.insert(art.clone(), Cover::Loading);
+        vec![art]
     }
 
     /// Acts on a key. Controls show their result at once; the next

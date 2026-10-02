@@ -244,3 +244,37 @@ fn now_playing_shows_a_square_cover() {
     // The panel is 32 columns inside; two columns per row make a square.
     assert_eq!(screen.lines().filter(|l| l.contains(&row)).count(), 16, "{screen}");
 }
+
+#[test]
+fn a_loaded_cover_replaces_the_stand_in() {
+    let mut view = demo();
+    let art = "https://i.scdn.co/image/pocket-park".to_string();
+    view.status.track.as_mut().unwrap().art = Some(art.clone());
+    assert_eq!(view.wanted(), vec![art.clone()]);
+    // Asked once, however many snapshots follow.
+    assert!(view.wanted().is_empty());
+
+    let teal = [20, 160, 150];
+    let picture = cover::Picture { width: 4, height: 4, pixels: vec![teal; 16] };
+    assert!(view.apply(Update::Art { art: art.clone(), picture: Some(picture) }));
+    let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+    terminal.draw(|frame| view::draw(frame, &view)).unwrap();
+    let buffer = terminal.backend().buffer();
+    let teal = ratatui::style::Color::Rgb(20, 160, 150);
+    // The Now playing panel and the player bar both show it.
+    assert_eq!((buffer[(110, 5)].fg, buffer[(110, 5)].bg), (teal, teal));
+    assert_eq!(buffer[(3, 35)].fg, teal);
+
+    // A cover that fails keeps the stand-in and is not asked for again.
+    view.apply(Update::Art { art: art.clone(), picture: None });
+    terminal.draw(|frame| view::draw(frame, &view)).unwrap();
+    assert_ne!(terminal.backend().buffer()[(110, 5)].fg, teal);
+    assert!(view.wanted().is_empty());
+}
+
+#[test]
+fn tracks_without_art_ask_for_nothing() {
+    let mut view = demo();
+    assert!(view.wanted().is_empty());
+    assert!(View::default().wanted().is_empty());
+}

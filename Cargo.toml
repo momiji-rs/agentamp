@@ -28,6 +28,11 @@ rodio = { version = "0.21", default-features = false, features = ["playback", "m
 # Title, artist, album and duration of local files.
 lofty = "0.25"
 ratatui = { version = "0.30", default-features = false, features = ["crossterm", "layout-cache"] }
+# Decoding covers: Spotify's and YouTube's are JPEG, embedded ones also PNG.
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+# librespot's HTTP client fetches covers; these are its request types.
+http = "1"
+bytes = "1"
 # The same width tables ratatui lays out with, to place the cursor in --frame output.
 unicode-width = "0.2"
 

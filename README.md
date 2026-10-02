@@ -36,6 +36,10 @@ stops, the arrows seek and set the volume, `/` plays a link, search or
 path, `a` adds one, and `q` closes the window while the music keeps going.
 The controls use Nerd Font icons, as Omarchy's terminal font has them;
 `AGENTAMP_ICONS=plain` keeps to characters any monospace font draws.
+Covers come from Spotify's image server, YouTube's thumbnails and the
+pictures in a file's tags; downloaded ones are kept in
+`~/.cache/agentamp/art/`. They are drawn in half blocks, so any terminal
+with 24-bit colour shows them.
 `agentamp tui --frame 120x36` prints one frame as terminal output, for
 scripts, agents and screenshots.
 

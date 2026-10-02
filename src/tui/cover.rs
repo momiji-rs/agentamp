@@ -18,7 +18,7 @@ impl Picture {
     /// A stand-in until real art loads: a diagonal blend of two colours
     /// picked from `seed`, so one album always gets the same tile.
     pub fn placeholder(seed: &str, width: u16, height: u16) -> Self {
-        let hash = seed.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3));
+        let hash = hash(seed);
         let hue = (hash % 360) as f32;
         let from = hsl(hue, 0.55, 0.52);
         let to = hsl((hue + 40.0 + (hash >> 16) as f32 % 80.0) % 360.0, 0.6, 0.22);
@@ -30,8 +30,28 @@ impl Picture {
         Self { width, height, pixels }
     }
 
-    fn at(&self, x: u16, y: u16) -> [u8; 3] {
-        self.pixels[usize::from(y) * usize::from(self.width) + usize::from(x)]
+    /// The mean colour of the source pixels under output pixel (`x`, `y`)
+    /// of a `width`×`height` picture, so shrinking a cover keeps its detail
+    /// smooth instead of dropping pixels.
+    fn sample(&self, x: u32, y: u32, width: u32, height: u32) -> [u8; 3] {
+        let span = |i: u32, out: u32, size: u16| {
+            let size = u32::from(size);
+            let start = i * size / out;
+            start..((i + 1) * size / out).max(start + 1).min(size)
+        };
+        let (xs, ys) = (span(x, width, self.width), span(y, height, self.height));
+        let mut sum = [0u32; 3];
+        let mut count = 0;
+        for sy in ys {
+            for sx in xs.clone() {
+                let pixel = self.pixels[sy as usize * usize::from(self.width) + sx as usize];
+                for (total, channel) in sum.iter_mut().zip(pixel) {
+                    *total += u32::from(channel);
+                }
+                count += 1;
+            }
+        }
+        sum.map(|total| (total / count.max(1)) as u8)
     }
 
     /// Draws the picture scaled to fill `area`, two pixels per cell.
@@ -39,20 +59,22 @@ impl Picture {
         if self.width == 0 || self.height == 0 {
             return;
         }
-        let rows = u32::from(area.height) * 2;
+        let (width, height) = (u32::from(area.width), u32::from(area.height) * 2);
         for cy in 0..area.height {
             for cx in 0..area.width {
-                let sx = (u32::from(cx) * u32::from(self.width) / u32::from(area.width)) as u16;
-                let top = (u32::from(cy) * 2 * u32::from(self.height) / rows) as u16;
-                let bottom = ((u32::from(cy) * 2 + 1) * u32::from(self.height) / rows) as u16;
-                let [r, g, b] = self.at(sx, top);
-                let [r2, g2, b2] = self.at(sx, bottom);
+                let [r, g, b] = self.sample(cx.into(), u32::from(cy) * 2, width, height);
+                let [r2, g2, b2] = self.sample(cx.into(), u32::from(cy) * 2 + 1, width, height);
                 if let Some(cell) = buffer.cell_mut((area.x + cx, area.y + cy)) {
                     cell.set_symbol("▀").set_fg(Color::Rgb(r, g, b)).set_bg(Color::Rgb(r2, g2, b2));
                 }
             }
         }
     }
+}
+
+/// FNV-1a: a stable name for a seed or URL.
+pub fn hash(text: &str) -> u64 {
+    text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3))
 }
 
 fn mix(a: [u8; 3], b: [u8; 3], t: f32) -> [u8; 3] {
@@ -95,6 +117,14 @@ mod tests {
         let cell = &buffer[(1, 0)];
         assert_eq!((cell.symbol(), cell.fg, cell.bg), ("▀", Color::Rgb(255, 0, 0), Color::Rgb(0, 0, 255)));
         assert_eq!(buffer[(0, 0)].symbol(), " ");
+    }
+
+    #[test]
+    fn shrinking_averages_the_pixels_it_covers() {
+        let picture = Picture { width: 2, height: 2, pixels: vec![[200, 0, 0], [0, 0, 200], [200, 0, 0], [0, 0, 200]] };
+        let mut buffer = Buffer::empty(Rect::new(0, 0, 1, 1));
+        picture.draw(Rect::new(0, 0, 1, 1), &mut buffer);
+        assert_eq!(buffer[(0, 0)].fg, Color::Rgb(100, 0, 100));
     }
 
     #[test]

@@ -53,6 +53,11 @@ impl Paths {
         self.cache.join("spotify-audio")
     }
 
+    /// Downloaded covers, named after their URL.
+    pub fn art(&self) -> PathBuf {
+        self.cache.join("art")
+    }
+
     pub fn log(&self) -> PathBuf {
         self.cache.join("agentamp.log")
     }
