@@ -29,7 +29,7 @@ const VOLUME_STEP: u8 = 5;
 
 /// What the link thread hears from the daemon.
 enum Update {
-    Snapshot { status: Status, upcoming: Vec<Track>, history: Vec<Track> },
+    Snapshot { status: Box<Status>, upcoming: Vec<Track>, history: Vec<Track> },
     Answer(Result<String, String>),
 }
 
@@ -122,7 +122,7 @@ fn answer(paths: &Paths, request: &Request) -> Result<String, String> {
 
 /// The player's state, without starting it.
 fn snapshot(paths: &Paths) -> Result<Update> {
-    let status = serde_json::from_value(crate::send(paths, &Request::Status, false)?)?;
+    let status = Box::new(serde_json::from_value(crate::send(paths, &Request::Status, false)?)?);
     let queue = crate::send(paths, &Request::Queue, false)?;
     let tracks = |key: &str| -> Vec<Track> { serde_json::from_value(queue[key].clone()).unwrap_or_default() };
     Ok(Update::Snapshot { status, upcoming: tracks("upcoming"), history: tracks("history") })
@@ -146,6 +146,7 @@ impl View {
     fn apply(&mut self, update: Update) -> bool {
         match update {
             Update::Snapshot { status, upcoming, history } => {
+                let status = *status;
                 let changed = status != self.status || upcoming != self.upcoming || history != self.history;
                 self.status = status;
                 self.upcoming = upcoming;

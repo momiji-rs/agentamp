@@ -24,6 +24,9 @@ pub fn read(path: &Path, source: Source) -> Track {
         }
         track.artist = tag.artist().map(|a| a.into_owned()).unwrap_or_default();
         track.album = tag.album().map(|a| a.into_owned()).unwrap_or_default();
+        if !tag.pictures().is_empty() {
+            track.art = Some(track.uri.clone());
+        }
     }
     track
 }
@@ -49,5 +52,13 @@ mod tests {
         let track = read(&path, Source::Local);
         assert_eq!((track.title.as_str(), track.artist.as_str()), ("Song", "Band"));
         assert!((1400..=1600).contains(&track.duration_ms), "{}", track.duration_ms);
+        assert_eq!(track.art, None);
+    }
+
+    #[test]
+    fn an_embedded_picture_is_the_cover() {
+        let path = crate::testutil::wav_with_cover("covered", b"\x89PNG not really".to_vec());
+        let track = read(&path, Source::Local);
+        assert_eq!(track.art.as_deref(), Some(track.uri.as_str()));
     }
 }

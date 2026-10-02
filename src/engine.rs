@@ -365,6 +365,8 @@ impl Engine {
                     track.artist = artists.iter().map(|a| a.name.as_str()).collect::<Vec<_>>().join(", ");
                     track.album = album.clone();
                     track.duration_ms = audio_item.duration_ms;
+                    track.art = crate::spotify::cover(audio_item.covers.iter().map(|c| (c.width, c.url.clone())))
+                        .or(track.art);
                     self.queue.update(&track);
                 }
             }

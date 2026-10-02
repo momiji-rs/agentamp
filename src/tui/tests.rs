@@ -195,14 +195,14 @@ fn answers_and_errors_reach_the_footer() {
 fn an_unchanged_snapshot_needs_no_redraw() {
     let mut view = demo();
     let same = Update::Snapshot {
-        status: view.status.clone(),
+        status: Box::new(view.status.clone()),
         upcoming: view.upcoming.clone(),
         history: view.history.clone(),
     };
     assert!(!view.apply(same));
     let mut later = view.status.clone();
     later.position_ms += 1000;
-    let moved = Update::Snapshot { status: later, upcoming: view.upcoming.clone(), history: view.history.clone() };
+    let moved = Update::Snapshot { status: Box::new(later), upcoming: view.upcoming.clone(), history: view.history.clone() };
     assert!(view.apply(moved));
 }
 

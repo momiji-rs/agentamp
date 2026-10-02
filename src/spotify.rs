@@ -129,8 +129,19 @@ impl Spotify {
             album: track.album.name,
             duration_ms: track.duration.max(0) as u32,
             link: None,
+            art: cover(track.album.covers.iter().map(|c| (c.width, format!("https://i.scdn.co/image/{}", c.id)))),
         })
     }
+}
+
+/// The cover to show from an album's sizes, given as (width, URL): the
+/// smallest that is still sharp in a terminal, or else the largest.
+pub fn cover(sizes: impl IntoIterator<Item = (i32, String)>) -> Option<String> {
+    const ENOUGH: i32 = 300;
+    let mut sizes: Vec<_> = sizes.into_iter().collect();
+    sizes.sort_by_key(|(width, _)| *width);
+    let pick = sizes.iter().position(|(width, _)| *width >= ENOUGH).unwrap_or(sizes.len().saturating_sub(1));
+    (!sizes.is_empty()).then(|| sizes.swap_remove(pick).1)
 }
 
 /// Plays Spotify tracks. librespot reports their end as a player event,
@@ -255,6 +266,14 @@ pub fn ended(event: &PlayerEvent) -> Option<(String, bool)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_cover_is_the_smallest_sharp_size() {
+        let sizes = |list: &[i32]| list.iter().map(|w| (*w, format!("{w}px"))).collect::<Vec<_>>();
+        assert_eq!(cover(sizes(&[640, 64, 300])).as_deref(), Some("300px"));
+        assert_eq!(cover(sizes(&[64, 120])).as_deref(), Some("120px"));
+        assert_eq!(cover(sizes(&[])), None);
+    }
 
     fn uri() -> SpotifyUri {
         SpotifyUri::from_uri("spotify:track:4iV5W9uYEdYUVa79Axb7Rh").unwrap()

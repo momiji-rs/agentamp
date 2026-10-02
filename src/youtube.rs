@@ -66,6 +66,8 @@ fn parse(line: &str) -> Result<Track> {
     track.artist = info.uploader.unwrap_or_default();
     track.duration_ms = info.duration.map_or(0, |d| (d * 1000.0) as u32);
     track.link = Some(info.webpage_url.unwrap_or_else(|| format!("https://www.youtube.com/watch?v={}", info.id)));
+    // Every video has this one, as a JPEG.
+    track.art = Some(format!("https://i.ytimg.com/vi/{}/hqdefault.jpg", info.id));
     Ok(track)
 }
 
@@ -84,6 +86,7 @@ mod tests {
         assert_eq!(track.label(), "Plastic Love · Mariya Takeuchi");
         assert_eq!(track.duration_ms, 309_500);
         assert_eq!(track.link.as_deref(), Some("https://www.youtube.com/watch?v=T_lC2O1oIew"));
+        assert_eq!(track.art.as_deref(), Some("https://i.ytimg.com/vi/T_lC2O1oIew/hqdefault.jpg"));
     }
 
     #[test]

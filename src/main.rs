@@ -295,6 +295,24 @@ mod testutil {
         path
     }
 
+    /// A silent WAV file whose ID3 tag holds `cover` as its front cover.
+    pub fn wav_with_cover(name: &str, cover: Vec<u8>) -> PathBuf {
+        use lofty::config::WriteOptions;
+        use lofty::picture::{MimeType, Picture, PictureType};
+        use lofty::prelude::*;
+        use lofty::tag::{Tag, TagType};
+
+        let path = scratch(name).join("covered.wav");
+        std::fs::write(&path, silent_wav(100)).unwrap();
+        let mut file = lofty::read_from_path(&path).unwrap();
+        let mut tag = Tag::new(TagType::Id3v2);
+        tag.set_title("Covered".into());
+        tag.push_picture(Picture::unchecked(cover).pic_type(PictureType::CoverFront).mime_type(MimeType::Png).build());
+        file.insert_tag(tag);
+        file.save_to_path(&path, WriteOptions::default()).unwrap();
+        path
+    }
+
     pub fn silent_wav(ms: u32) -> Vec<u8> {
         let rate = 8000u32;
         let samples = rate * ms / 1000;

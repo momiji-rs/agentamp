@@ -27,6 +27,10 @@ pub struct Track {
     /// Where the track came from, when that is not `uri` (a YouTube page).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub link: Option<String>,
+    /// The cover: an https image URL, or for a local file the file itself,
+    /// whose tags hold the picture.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub art: Option<String>,
 }
 
 impl Track {
@@ -40,6 +44,7 @@ impl Track {
             album: String::new(),
             duration_ms: 0,
             link: None,
+            art: None,
         }
     }
 
