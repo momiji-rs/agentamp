@@ -52,6 +52,8 @@ enum Cmd {
     Toggle,
     /// Skip to the next track.
     Next,
+    /// Back to the start of the track, or to the previous one.
+    Prev,
     /// Stop playback; the queue stays.
     Stop,
     /// Empty the queue after the current track.
@@ -121,6 +123,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Resume => Request::Resume,
         Cmd::Toggle => Request::Toggle,
         Cmd::Next => Request::Next,
+        Cmd::Prev => Request::Previous,
         Cmd::Stop => Request::Stop,
         Cmd::Clear => Request::Clear,
         Cmd::Now => Request::Status,

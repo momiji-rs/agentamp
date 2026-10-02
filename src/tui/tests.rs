@@ -163,6 +163,7 @@ fn controls_show_their_result_at_once() {
     view.status.volume = 98;
     assert_eq!(press(&mut view, KeyCode::Char('+')), Some(Command::Send(Request::Volume { percent: 100 })));
     assert_eq!(press(&mut view, KeyCode::Char('n')), Some(Command::Send(Request::Next)));
+    assert_eq!(press(&mut view, KeyCode::Char('b')), Some(Command::Send(Request::Previous)));
     assert_eq!(press(&mut view, KeyCode::Char('s')), Some(Command::Send(Request::Stop)));
     assert_eq!(view.status.state, State::Stopped);
     assert_eq!(press(&mut view, KeyCode::Char('q')), Some(Command::Quit));

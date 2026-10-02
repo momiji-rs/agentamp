@@ -31,7 +31,7 @@ not compile against vergen 9.1.
 ## Use
 
 `agentamp` alone opens the window: your library, the queue and what is
-playing, with the player bar below. Space plays and pauses, `n` skips, `s`
+playing, with the player bar below. Space plays and pauses, `n` skips, `b` goes back, `s`
 stops, the arrows seek and set the volume, `/` plays a link, search or
 path, `a` adds one, and `q` closes the window while the music keeps going.
 `agentamp tui --frame 120x36` prints one frame as terminal output, for
@@ -45,7 +45,7 @@ agentamp play yt: plastic love     # the first YouTube result
 agentamp add --next song.flac      # after the current track
 agentamp now                       # ▶ Title · Artist  1:23 / 4:29
 agentamp --json now                # the same, for scripts and agents
-agentamp pause | resume | toggle | next | stop | clear
+agentamp pause | resume | toggle | next | prev | stop | clear
 agentamp queue
 agentamp seek 1:30
 agentamp volume 40

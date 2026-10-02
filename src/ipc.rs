@@ -25,6 +25,8 @@ pub enum Request {
     Resume,
     Toggle,
     Next,
+    /// Back to the start of the track, or to the one before near its start.
+    Previous,
     Stop,
     Clear,
     Status,

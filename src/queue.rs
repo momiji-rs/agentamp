@@ -40,6 +40,16 @@ impl Queue {
         self.current.clone()
     }
 
+    /// Steps back to the last played track; the current one plays next.
+    pub fn back(&mut self) -> Option<Track> {
+        let previous = self.history.pop_back()?;
+        if let Some(current) = self.current.take() {
+            self.upcoming.push_front(current);
+        }
+        self.current = Some(previous);
+        self.current.clone()
+    }
+
     /// Ends playback: the current track goes to the history, the rest stays.
     pub fn stop(&mut self) {
         if let Some(done) = self.current.take() {
@@ -130,5 +140,16 @@ mod tests {
         assert_eq!(q.upcoming[1].title, "Song");
         assert_eq!(q.upcoming[1].link.as_deref(), Some("https://youtu.be/x"));
         assert_eq!(q.upcoming[0].title, "b");
+    }
+
+    #[test]
+    fn back_returns_to_the_last_played_and_keeps_the_current_next() {
+        let mut q = Queue::default();
+        replace(&mut q, vec![t("a"), t("b"), t("c")]);
+        q.advance();
+        assert_eq!(q.back().unwrap().uri, "a");
+        assert_eq!(q.upcoming.iter().map(|t| t.uri.as_str()).collect::<Vec<_>>(), ["b", "c"]);
+        assert!(q.back().is_none());
+        assert_eq!(q.current.as_ref().unwrap().uri, "a");
     }
 }

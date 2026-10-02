@@ -203,6 +203,7 @@ impl View {
                 Request::Toggle
             }
             KeyCode::Char('n') => Request::Next,
+            KeyCode::Char('b') => Request::Previous,
             KeyCode::Char('s') => {
                 status.state = State::Stopped;
                 Request::Stop

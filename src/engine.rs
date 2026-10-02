@@ -16,6 +16,9 @@ use crate::model::{Source, State, Status, Track};
 use crate::queue::Queue;
 use crate::spotify::{self, Spotify, SpotifyDeck};
 
+/// Within this much of a track's start, Previous goes to the track before.
+const RESTART_WINDOW_MS: u32 = 3_000;
+
 pub enum Msg {
     /// A control request. `play` and `add` arrive as `Enqueue`.
     Control(Request, oneshot::Sender<Response>),
@@ -137,6 +140,7 @@ impl Engine {
                 _ => self.resume(),
             },
             Request::Next => self.play_next(),
+            Request::Previous => self.previous(),
             Request::Stop => self.stop(),
             Request::Clear => self.queue.clear(),
             Request::Volume { percent } => {
@@ -211,6 +215,34 @@ impl Engine {
         }
         self.queue.stop();
         self.state = State::Stopped;
+    }
+
+    /// Restarts the track, or goes back one when it has only just begun,
+    /// as Spotify does.
+    fn previous(&mut self) {
+        let restart = self.queue.current.is_some()
+            && (self.status().position_ms > RESTART_WINDOW_MS || self.queue.history.is_empty());
+        if restart {
+            if let Some(deck) = self.deck()
+                && let Err(e) = deck.seek(0)
+            {
+                warn!("cannot restart: {e:#}");
+            }
+            return;
+        }
+        let Some(track) = self.queue.back() else { return };
+        match self.start(&track) {
+            Ok(()) => {
+                info!("playing {}", track.label());
+                self.state = State::Playing;
+                self.error = None;
+            }
+            Err(e) => {
+                warn!("cannot go back to {}: {e:#}", track.label());
+                self.error = Some(format!("cannot play {}: {e:#}", track.label()));
+                self.play_next();
+            }
+        }
     }
 
     /// Starts the next track that will play, skipping any that fail.
@@ -496,5 +528,19 @@ mod tests {
         tx.send(Msg::Control(Request::Queue, reply)).unwrap();
         let queue = answer.await.unwrap().into_result().unwrap();
         assert_eq!(queue["upcoming"][0]["title"], "Song B");
+    }
+
+    #[tokio::test]
+    async fn previous_restarts_then_goes_back() {
+        let tx = start();
+        enqueue(&tx, vec![track("a", 60_000), track("b", 60_000)], Mode::Replace).await;
+        // With nothing played before, it restarts.
+        assert_eq!(title(&status(&tx, Request::Previous).await), "a");
+        status(&tx, Request::Next).await;
+        status(&tx, Request::Seek { position_ms: 10_000 }).await;
+        let s = status(&tx, Request::Previous).await;
+        assert_eq!((title(&s), s.position_ms / 1000), ("b", 0));
+        let s = status(&tx, Request::Previous).await;
+        assert_eq!((title(&s), s.queue_len, s.state), ("a", 1, State::Playing));
     }
 }
