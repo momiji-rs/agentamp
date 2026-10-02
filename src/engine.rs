@@ -372,7 +372,10 @@ mod tests {
 
     fn start() -> mpsc::UnboundedSender<Msg> {
         let (tx, rx) = mpsc::unbounded_channel();
-        let paths = crate::paths::Paths::under(&crate::testutil::scratch("engine"));
+        // Tests run in parallel and each clears its directory, so each has its own.
+        static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let paths = crate::paths::Paths::under(&crate::testutil::scratch(&format!("engine-{n}")));
         tokio::spawn(Engine::new(Box::new(NullDeck::default()), 80, Spotify::new(paths), tx.clone()).run(rx));
         tx
     }
