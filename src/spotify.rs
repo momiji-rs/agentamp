@@ -135,6 +135,7 @@ impl Spotify {
             duration_ms: track.duration.max(0) as u32,
             link: None,
             art: cover(track.album.covers.iter().map(|c| (c.width, format!("https://i.scdn.co/image/{}", c.id)))),
+            downloading: false,
         })
     }
 }

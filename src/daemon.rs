@@ -12,12 +12,13 @@ use tokio::net::{UnixListener, UnixStream};
 use tokio::sync::{mpsc, oneshot};
 
 use crate::deck::{Deck, NullDeck, RodioDeck};
-use crate::engine::{Engine, Mode, Msg};
+use crate::engine::{Engine, Fetch, Mode, Msg};
 use crate::ipc::{Request, Response};
 use crate::paths::Paths;
 use crate::resolve;
 use crate::spotify::Spotify;
 use crate::tap::Tap;
+use crate::youtube;
 
 pub const DEFAULT_VOLUME: u8 = 80;
 /// How often a listening window is sent the sound since the last send.
@@ -37,13 +38,19 @@ pub async fn run(paths: Paths) -> Result<()> {
         _ => Box::new(RodioDeck::new(DEFAULT_VOLUME, tap.clone())),
     };
     let spotify = Spotify::new(paths.clone());
+    let dir = paths.youtube_audio();
+    let fetch: Fetch = Arc::new(move |url| {
+        let dir = dir.clone();
+        Box::pin(async move { youtube::fetch(&url, &dir).await })
+    });
     let (tx, rx) = mpsc::unbounded_channel();
-    let engine = tokio::spawn(Engine::new(files, DEFAULT_VOLUME, spotify.clone(), tx.clone(), tap.clone()).run(rx));
+    let engine = Engine::new(files, DEFAULT_VOLUME, spotify.clone(), fetch, tx.clone(), tap.clone());
+    let engine = tokio::spawn(engine.run(rx));
 
     let accept = async {
         loop {
             let (stream, _) = listener.accept().await?;
-            tokio::spawn(serve(stream, tx.clone(), paths.clone(), spotify.clone(), tap.clone()));
+            tokio::spawn(serve(stream, tx.clone(), spotify.clone(), tap.clone()));
         }
         #[allow(unreachable_code)]
         Ok::<(), std::io::Error>(())
@@ -76,7 +83,6 @@ fn bind(socket: &Path) -> Result<UnixListener> {
 async fn serve(
     stream: UnixStream,
     tx: mpsc::UnboundedSender<Msg>,
-    paths: Paths,
     spotify: Arc<Spotify>,
     tap: Arc<Tap>,
 ) {
@@ -85,7 +91,7 @@ async fn serve(
     while let Ok(Some(line)) = lines.next_line().await {
         let response = match serde_json::from_str::<Request>(&line) {
             Ok(Request::Listen) => return listen(write, &tap).await,
-            Ok(request) => handle(request, &tx, &paths, &spotify).await,
+            Ok(request) => handle(request, &tx, &spotify).await,
             Err(e) => Response::error(format!("not a request: {e}")),
         };
         let mut out = serde_json::to_string(&response).unwrap_or_default();
@@ -127,7 +133,6 @@ async fn listen(mut write: OwnedWriteHalf, tap: &Arc<Tap>) {
 async fn handle(
     request: Request,
     tx: &mpsc::UnboundedSender<Msg>,
-    paths: &Paths,
     spotify: &Arc<Spotify>,
 ) -> Response {
     let (reply, answer) = oneshot::channel();
@@ -141,7 +146,7 @@ async fn handle(
                 Request::Add { next: true, .. } => Mode::Next,
                 _ => Mode::Append,
             };
-            match resolve::tracks(target, paths, spotify, tx).await {
+            match resolve::tracks(target, spotify, tx).await {
                 Ok(tracks) => Msg::Enqueue { tracks, mode, reply },
                 Err(e) => {
                     warn!("cannot play {target}: {e:#}");

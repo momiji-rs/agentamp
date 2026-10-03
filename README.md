@@ -107,7 +107,11 @@ downloaded again.
 
 YouTube links and `yt:` searches go through the installed `yt-dlp`. AgentAmp
 downloads the AAC audio track once into `~/.cache/agentamp/youtube/` and
-plays the file from there. This is for personal listening; downloading may
+plays the file from there. `play` and `add` answer at once: the track waits
+in the queue as `downloading` and plays as soon as its file is here.
+Downloads go two at a time in play order, so the next track is usually ready
+by its turn. A video that cannot be
+downloaded leaves the queue, and `now` says why. This is for personal listening; downloading may
 breach YouTube's terms. `AGENTAMP_YTDLP` points at another yt-dlp.
 
 `AGENTAMP_HOME=<dir>` keeps every file under one directory, and

@@ -21,7 +21,9 @@ use crate::youtube::Found;
 const INSTRUCTIONS: &str = "AgentAmp plays Spotify (Premium, after `agentamp login`), YouTube and local files \
 through a background player that keeps going between calls. `play` replaces the queue, `add` extends it, \
 `now_playing` and `queue` say what is on without changing it. `search_youtube` lists videos to choose \
-from; pass a result's `target` to `play` or `add`.";
+from; pass a result's `target` to `play` or `add`. \
+A YouTube track answers at once with `downloading: true` and plays when its file is here; one that fails \
+leaves the queue and `now_playing` gives the error.";
 
 pub fn run(paths: Paths) -> Result<()> {
     tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {

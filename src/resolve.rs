@@ -9,7 +9,6 @@ use tokio::sync::mpsc;
 use crate::engine::Msg;
 use crate::library;
 use crate::model::{Source, Track};
-use crate::paths::Paths;
 use crate::spotify::Spotify;
 use crate::target::{self, Target};
 use crate::youtube;
@@ -18,10 +17,11 @@ use crate::youtube;
 const BATCH: usize = 10;
 
 /// The tracks `target` names. A Spotify album or playlist returns at once
-/// with its first track's details; the rest follow as `Msg::Resolved`.
+/// with its first track's details; the rest follow as `Msg::Resolved`. A
+/// YouTube target returns at once as a track still downloading, which the
+/// engine fetches.
 pub async fn tracks(
     target: &str,
-    paths: &Paths,
     spotify: &Arc<Spotify>,
     tx: &mpsc::UnboundedSender<Msg>,
 ) -> Result<Vec<Track>> {
@@ -63,6 +63,6 @@ pub async fn tracks(
             });
             Ok(tracks)
         }
-        Target::Youtube(url) => Ok(vec![youtube::fetch(&url, &paths.youtube_audio()).await?]),
+        Target::Youtube(url) => Ok(vec![youtube::pending(&url)]),
     }
 }

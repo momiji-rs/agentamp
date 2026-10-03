@@ -1,6 +1,9 @@
 //! The player: one task owns the queue and the decks, and every request and
 //! playback event passes through it in order.
 
+use std::collections::HashMap;
+use std::future::Future;
+use std::pin::Pin;
 use std::sync::Arc;
 
 use anyhow::{Result, bail};
@@ -9,6 +12,7 @@ use librespot_playback::player::PlayerEvent;
 use log::{info, warn};
 use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
+use tokio::task::AbortHandle;
 
 use crate::deck::Deck;
 use crate::ipc::{Request, Response};
@@ -19,6 +23,13 @@ use crate::tap::Tap;
 
 /// Within this much of a track's start, Previous goes to the track before.
 const RESTART_WINDOW_MS: u32 = 3_000;
+/// YouTube downloads at a time: the current track and the next, so the next
+/// is ready by its turn without yt-dlp crowding a slow connection.
+const DOWNLOADS: usize = 2;
+
+/// Downloads a YouTube link or `ytsearch1:` query into a track that plays
+/// from a file. The daemon's runs yt-dlp; the tests' pretend.
+pub type Fetch = Arc<dyn Fn(String) -> Pin<Box<dyn Future<Output = Result<Track>> + Send>> + Send + Sync>;
 
 pub enum Msg {
     /// A control request. `play` and `add` arrive as `Enqueue`.
@@ -31,6 +42,8 @@ pub enum Msg {
     Spotify(PlayerEvent),
     /// The Spotify session the current track waited for is ready, or failed.
     SessionReady(Result<(), String>),
+    /// The download for the queued tracks waiting on `key` finished, or failed.
+    Fetched { key: String, result: Result<Track, String> },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,6 +64,9 @@ pub struct Engine {
     spotify: Arc<Spotify>,
     spotify_deck: Option<SpotifyDeck>,
     connecting: bool,
+    fetch: Fetch,
+    /// The downloads under way, by the key the waiting tracks have as `uri`.
+    fetching: HashMap<String, AbortHandle>,
     tx: mpsc::UnboundedSender<Msg>,
     tap: Arc<Tap>,
 }
@@ -60,6 +76,7 @@ impl Engine {
         files: Box<dyn Deck>,
         volume: u8,
         spotify: Arc<Spotify>,
+        fetch: Fetch,
         tx: mpsc::UnboundedSender<Msg>,
         tap: Arc<Tap>,
     ) -> Self {
@@ -73,6 +90,8 @@ impl Engine {
             spotify,
             spotify_deck: None,
             connecting: false,
+            fetch,
+            fetching: HashMap::new(),
             tx,
             tap,
         }
@@ -112,7 +131,12 @@ impl Engine {
                 }
                 Msg::Spotify(event) => self.spotify_event(event),
                 Msg::SessionReady(result) => self.session_ready(result),
+                Msg::Fetched { key, result } => self.fetched(&key, result),
             }
+            self.fetch_pending();
+        }
+        for task in self.fetching.values() {
+            task.abort();
         }
         self.files.release();
         if let Some(deck) = &mut self.spotify_deck {
@@ -158,6 +182,9 @@ impl Engine {
                 if let Some(deck) = &mut self.spotify_deck {
                     deck.set_volume(self.volume);
                 }
+            }
+            Request::Seek { .. } if self.queue.current.as_ref().is_some_and(|t| t.downloading) => {
+                bail!("the track is still downloading")
             }
             Request::Seek { position_ms } => match self.deck() {
                 Some(deck) => deck.seek(position_ms)?,
@@ -276,7 +303,16 @@ impl Engine {
 
     /// Starts `track` on its deck. A Spotify track shows as playing at once;
     /// when the session has to connect first, it starts when it is ready.
+    /// So does a YouTube track still downloading, silent until its file is here.
     fn start(&mut self, track: &Track) -> Result<()> {
+        if track.downloading {
+            if let Some(deck) = &mut self.spotify_deck {
+                deck.stop();
+            }
+            self.generation += 1;
+            self.files.release();
+            return Ok(());
+        }
         match track.source {
             Source::Local | Source::Youtube => {
                 if let Some(deck) = &mut self.spotify_deck {
@@ -361,6 +397,67 @@ impl Engine {
         }
     }
 
+    /// Keeps the first downloads in play order under way, and cancels the
+    /// ones nothing waits for any more or that something sooner overtook.
+    /// Cancelling drops the task, and with it kills its yt-dlp.
+    fn fetch_pending(&mut self) {
+        let mut wanted = self.queue.downloads();
+        wanted.truncate(DOWNLOADS);
+        self.fetching.retain(|key, task| {
+            let keep = wanted.contains(key);
+            if !keep {
+                task.abort();
+            }
+            keep
+        });
+        for key in wanted {
+            if self.fetching.contains_key(&key) {
+                continue;
+            }
+            info!("downloading {key}");
+            let (fetch, tx, done) = (self.fetch.clone(), self.tx.clone(), key.clone());
+            let task = tokio::spawn(async move {
+                let result = fetch(done.clone()).await.map_err(|e| format!("{e:#}"));
+                let _ = tx.send(Msg::Fetched { key: done, result });
+            });
+            self.fetching.insert(key, task.abort_handle());
+        }
+    }
+
+    fn fetched(&mut self, key: &str, result: Result<Track, String>) {
+        self.fetching.remove(key);
+        let current = self.queue.current.as_ref().is_some_and(|t| t.downloading && t.uri == key);
+        match result {
+            Ok(track) => {
+                self.queue.downloaded(key, &track);
+                if !current || self.state == State::Stopped {
+                    return;
+                }
+                match self.start(&track) {
+                    Ok(()) if self.state == State::Paused => self.files.pause(),
+                    Ok(()) => {}
+                    Err(e) => {
+                        warn!("skipping {}: {e:#}", track.label());
+                        self.play_next();
+                        self.error = Some(format!("cannot play {}: {e:#}", track.label()));
+                    }
+                }
+            }
+            Err(e) => {
+                if self.queue.drop_download(key) == 0 {
+                    return;
+                }
+                warn!("cannot download {key}: {e}");
+                let shown = key.strip_prefix("ytsearch1:").unwrap_or(key);
+                if current && self.state != State::Stopped {
+                    self.play_next();
+                }
+                // Said after the next track starts, which clears the last error.
+                self.error = Some(format!("cannot play {shown}: {e}"));
+            }
+        }
+    }
+
     fn spotify_event(&mut self, event: PlayerEvent) {
         if let Some(deck) = &mut self.spotify_deck {
             deck.observe(&event);
@@ -415,12 +512,17 @@ mod tests {
     }
 
     fn start() -> mpsc::UnboundedSender<Msg> {
+        start_with(Arc::new(|_| Box::pin(async { bail!("these tests download nothing") })))
+    }
+
+    fn start_with(fetch: Fetch) -> mpsc::UnboundedSender<Msg> {
         let (tx, rx) = mpsc::unbounded_channel();
         // Tests run in parallel and each clears its directory, so each has its own.
         static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let paths = crate::paths::Paths::under(&crate::testutil::scratch(&format!("engine-{n}")));
-        tokio::spawn(Engine::new(Box::new(NullDeck::default()), 80, Spotify::new(paths), tx.clone(), Default::default()).run(rx));
+        let engine = Engine::new(Box::new(NullDeck::default()), 80, Spotify::new(paths), fetch, tx.clone(), Default::default());
+        tokio::spawn(engine.run(rx));
         tx
     }
 
@@ -554,5 +656,162 @@ mod tests {
         assert_eq!((title(&s), s.position_ms / 1000), ("b", 0));
         let s = status(&tx, Request::Previous).await;
         assert_eq!((title(&s), s.queue_len, s.state), ("a", 1, State::Playing));
+    }
+
+    /// A pretend yt-dlp: each download waits until the test finishes it.
+    #[derive(Default)]
+    struct Downloads {
+        started: std::sync::Mutex<Vec<String>>,
+        waiting: std::sync::Mutex<HashMap<String, oneshot::Sender<Result<Track>>>>,
+    }
+
+    impl Downloads {
+        fn fetch(self: &Arc<Self>) -> Fetch {
+            let downloads = self.clone();
+            Arc::new(move |key| {
+                let (done, result) = oneshot::channel();
+                downloads.started.lock().unwrap().push(key.clone());
+                downloads.waiting.lock().unwrap().insert(key, done);
+                Box::pin(async move { result.await? })
+            })
+        }
+
+        /// The downloads under way, in key order. A cancelled one has dropped its end.
+        fn running(&self) -> Vec<String> {
+            let mut keys: Vec<String> =
+                self.waiting.lock().unwrap().iter().filter(|(_, done)| !done.is_closed()).map(|(k, _)| k.clone()).collect();
+            keys.sort();
+            keys
+        }
+
+        fn finish(&self, key: &str, result: Result<Track>) {
+            let done = self.waiting.lock().unwrap().remove(key).expect("downloading");
+            let _ = done.send(result);
+        }
+    }
+
+    /// What `fetch` makes of the search `ytsearch1:<name>`.
+    fn file(name: &str) -> Track {
+        let mut t = Track::placeholder(Source::Youtube, format!("/cache/{name}.m4a"));
+        t.title = name.to_uppercase();
+        t.duration_ms = 60_000;
+        t
+    }
+
+    fn search(name: &str) -> Track {
+        crate::youtube::pending(&format!("ytsearch1:{name}"))
+    }
+
+    fn searches(names: &[&str]) -> Vec<String> {
+        names.iter().map(|n| format!("ytsearch1:{n}")).collect()
+    }
+
+    /// Waits for `done`, which the engine makes true in its own time.
+    async fn eventually(what: &str, mut done: impl AsyncFnMut() -> bool) {
+        for _ in 0..300 {
+            if done().await {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("never: {what}");
+    }
+
+    #[tokio::test]
+    async fn a_youtube_track_answers_at_once_and_plays_when_downloaded() {
+        let downloads = Arc::new(Downloads::default());
+        let tx = start_with(downloads.fetch());
+        let answer = enqueue(&tx, vec![search("plastic love")], Mode::Replace).await.into_result().unwrap();
+        let shown: Status = serde_json::from_value(answer["status"].clone()).unwrap();
+        let track = shown.track.unwrap();
+        assert_eq!((shown.state, track.title.as_str(), track.downloading), (State::Playing, "plastic love", true));
+        eventually("the download starts", async || downloads.running() == searches(&["plastic love"])).await;
+        let (reply, answer) = oneshot::channel();
+        tx.send(Msg::Control(Request::Seek { position_ms: 1000 }, reply)).unwrap();
+        assert!(answer.await.unwrap().into_result().unwrap_err().to_string().contains("still downloading"));
+
+        downloads.finish("ytsearch1:plastic love", Ok(file("plastic love")));
+        eventually("it plays the file", async || title(&status(&tx, Request::Status).await) == "/cache/plastic love.m4a").await;
+        let s = status(&tx, Request::Status).await;
+        assert_eq!((s.state, s.track.unwrap().downloading, s.error), (State::Playing, false, None));
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        assert!(status(&tx, Request::Status).await.position_ms > 0, "the clock runs from the file's start");
+    }
+
+    #[tokio::test]
+    async fn downloads_go_two_at_a_time_in_play_order() {
+        let downloads = Arc::new(Downloads::default());
+        let tx = start_with(downloads.fetch());
+        enqueue(&tx, vec![search("a"), search("b"), search("c"), search("a")], Mode::Replace).await;
+        eventually("a and b download", async || downloads.running() == searches(&["a", "b"])).await;
+        // A track put next overtakes b, which waits its turn again.
+        enqueue(&tx, vec![search("d")], Mode::Next).await;
+        eventually("d overtakes b", async || downloads.running() == searches(&["a", "d"])).await;
+        downloads.finish("ytsearch1:a", Ok(file("a")));
+        eventually("b goes again", async || downloads.running() == searches(&["b", "d"])).await;
+        let (reply, answer) = oneshot::channel();
+        tx.send(Msg::Control(Request::Queue, reply)).unwrap();
+        let queue = answer.await.unwrap().into_result().unwrap();
+        assert_eq!(queue["current"]["uri"], "/cache/a.m4a");
+        assert_eq!(queue["upcoming"][3]["uri"], "/cache/a.m4a", "one download for both");
+        assert_eq!(downloads.started.lock().unwrap().iter().filter(|k| *k == "ytsearch1:a").count(), 1);
+    }
+
+    #[tokio::test]
+    async fn downloads_stop_once_nothing_waits_for_them() {
+        let downloads = Arc::new(Downloads::default());
+        let tx = start_with(downloads.fetch());
+        enqueue(&tx, vec![search("a"), search("b")], Mode::Replace).await;
+        eventually("both download", async || downloads.running() == searches(&["a", "b"])).await;
+        status(&tx, Request::Clear).await;
+        eventually("clear cancels b", async || downloads.running() == searches(&["a"])).await;
+        enqueue(&tx, vec![track("x", 60_000)], Mode::Replace).await;
+        eventually("play cancels a", async || downloads.running().is_empty()).await;
+    }
+
+    #[tokio::test]
+    async fn a_failed_download_leaves_the_queue_and_says_why() {
+        let downloads = Arc::new(Downloads::default());
+        let tx = start_with(downloads.fetch());
+        enqueue(&tx, vec![search("a"), track("b", 60_000), search("c")], Mode::Replace).await;
+        eventually("a and c download", async || downloads.running() == searches(&["a", "c"])).await;
+        downloads.finish("ytsearch1:c", Err(anyhow::anyhow!("no such video")));
+        eventually("c leaves", async || status(&tx, Request::Status).await.queue_len == 1).await;
+        let s = status(&tx, Request::Status).await;
+        assert_eq!((title(&s), s.error.as_deref()), ("ytsearch1:a", Some("cannot play c: no such video")));
+
+        downloads.finish("ytsearch1:a", Err(anyhow::anyhow!("refused")));
+        eventually("b plays", async || title(&status(&tx, Request::Status).await) == "b").await;
+        let s = status(&tx, Request::Status).await;
+        assert_eq!((s.state, s.queue_len, s.error.as_deref()), (State::Playing, 0, Some("cannot play a: refused")));
+    }
+
+    #[tokio::test]
+    async fn a_track_paused_while_downloading_stays_paused() {
+        let downloads = Arc::new(Downloads::default());
+        let tx = start_with(downloads.fetch());
+        enqueue(&tx, vec![search("a")], Mode::Replace).await;
+        assert_eq!(status(&tx, Request::Pause).await.state, State::Paused);
+        eventually("a downloads", async || downloads.running() == searches(&["a"])).await;
+        downloads.finish("ytsearch1:a", Ok(file("a")));
+        eventually("a is here", async || title(&status(&tx, Request::Status).await) == "/cache/a.m4a").await;
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        let s = status(&tx, Request::Status).await;
+        assert_eq!((s.state, s.position_ms), (State::Paused, 0));
+        assert_eq!(status(&tx, Request::Resume).await.state, State::Playing);
+    }
+
+    #[tokio::test]
+    async fn going_back_to_a_downloaded_track_plays_its_file() {
+        let downloads = Arc::new(Downloads::default());
+        let tx = start_with(downloads.fetch());
+        enqueue(&tx, vec![search("a"), track("b", 60_000)], Mode::Replace).await;
+        eventually("a downloads", async || downloads.running() == searches(&["a"])).await;
+        downloads.finish("ytsearch1:a", Ok(file("a")));
+        eventually("a is here", async || title(&status(&tx, Request::Status).await) == "/cache/a.m4a").await;
+        status(&tx, Request::Next).await;
+        let s = status(&tx, Request::Previous).await;
+        assert_eq!((title(&s), s.state), ("/cache/a.m4a", State::Playing));
+        assert_eq!(downloads.started.lock().unwrap().len(), 1);
     }
 }

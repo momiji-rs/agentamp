@@ -26,6 +26,9 @@ cached, on a quiet machine (load below 6). Release build.
 - While a song plays, the spectrum redraws at 60 fps: the window takes
   3.8% of one core and Ghostty 6.9% drawing it. Paused, once the bars have
   fallen, the window takes 0% and Ghostty 0.4%.
+- `play` and `add` with a YouTube target answer in 2 to 3 ms (29 ms when
+  the call starts the player) and download behind; before, they took 1.5 to
+  4.5 s. The sound itself still waits for yt-dlp, about 2.5 s (2026-10-03).
 
 ## How to measure
 
@@ -50,6 +53,27 @@ AAC file at volume 0, load about 2.4. CPU from `/proc/<pid>/stat`
 1000, Ghostty 69, 69 and 70. Paused for 10 s: the window 0, Ghostty 4.
 Nearly all of the window's time is on its drawing thread; the thread that
 reads the sound from the player stays under one tick in 5 s.
+
+## YouTube play and add (2026-10-03)
+
+Release build, `AGENTAMP_AUDIO=null`, a fresh `AGENTAMP_HOME`, yt-dlp
+2026.08.19 on the home connection, ms by `date +%s%3N` around each call.
+
+| step | before | after |
+|---|---|---|
+| `play yt: …`, answered (starts the player) | 1,770 | 29 |
+| …until the file plays | 1,770 | 2,619 |
+| `add yt: …`, answered | 1,520 and 4,510 | 3 and 2 |
+| both added files ready, two at a time | | 2,533 after the second add |
+| `add` of a search already cached, answered | 1,250 | 3 |
+| …until ready (yt-dlp still searches) | 1,250 | 2,482 |
+
+The before column came from other searches on an earlier run, so compare
+the answers, not the time to sound: that is yt-dlp's search and download,
+which vary from one run to the next, as the two before adds show. What changed is that nothing waits
+for it. A search already in the cache still costs a yt-dlp run; keeping
+what each search found would save it. The player held 12 MB resident
+afterwards.
 
 ## What was fixed (2026-10-02)
 

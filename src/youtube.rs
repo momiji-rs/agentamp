@@ -37,6 +37,18 @@ fn program() -> PathBuf {
     std::env::var_os("AGENTAMP_YTDLP").map_or_else(|| PathBuf::from("yt-dlp"), PathBuf::from)
 }
 
+/// What the queue shows for `url` (a video link or `ytsearch1:` query)
+/// until `fetch` has the file: the search, or the link.
+pub fn pending(url: &str) -> Track {
+    let mut track = Track::placeholder(Source::Youtube, url);
+    match url.strip_prefix("ytsearch1:") {
+        Some(query) => track.title = query.to_string(),
+        None => track.link = Some(url.to_string()),
+    }
+    track.downloading = true;
+    track
+}
+
 /// Downloads `url` (a video link or `ytsearch1:` query) into `dir`.
 pub async fn fetch(url: &str, dir: &Path) -> Result<Track> {
     std::fs::create_dir_all(dir)?;
@@ -176,6 +188,17 @@ mod tests {
         assert_eq!(found(r#"{"id": "radio", "title": "24/7 radio", "live_status": "is_live"}"#), None);
         assert_eq!(found(r#"{"id": "soon", "title": "Premiere", "live_status": "is_upcoming"}"#), None);
         assert_eq!(found("not json"), None);
+    }
+
+    #[test]
+    fn a_pending_track_shows_its_search_or_link() {
+        let search = pending("ytsearch1:plastic love");
+        assert_eq!((search.title.as_str(), search.uri.as_str()), ("plastic love", "ytsearch1:plastic love"));
+        assert!(search.downloading && search.link.is_none());
+        let link = pending("https://youtu.be/T_lC2O1oIew");
+        assert_eq!(link.title, "https://youtu.be/T_lC2O1oIew");
+        assert_eq!(link.link.as_deref(), Some("https://youtu.be/T_lC2O1oIew"));
+        assert_eq!(link.source, Source::Youtube);
     }
 
     #[test]

@@ -149,6 +149,7 @@ fn fake_yt_dlp(home: &Home) -> PathBuf {
             r#"#!/bin/sh
 echo "$@" >> "{log}"
 for last; do :; done
+case "$last" in *slow*) sleep 3;; esac
 case "$last" in *missing*) echo "ERROR: [youtube] missing: Video unavailable" >&2; exit 1;; esac
 case "$last" in *refused*) echo "ERROR: unable to download video data: HTTP Error 403: Forbidden" >&2; exit 1;; esac
 case "$last" in *flaky*) [ -e "{log}.refused" ] || {{ touch "{log}.refused"; echo "ERROR: unable to download video data: HTTP Error 403: Forbidden" >&2; exit 1; }};; esac
@@ -181,32 +182,65 @@ fn youtube_searches_download_into_the_cache() {
             .unwrap();
         (out.status.success(), String::from_utf8_lossy(&out.stdout).into_owned(), String::from_utf8_lossy(&out.stderr).into_owned())
     };
+    let now = || -> serde_json::Value {
+        let (ok, out, err) = run(&["--json", "now"]);
+        assert!(ok, "{err}");
+        serde_json::from_str(&out).unwrap()
+    };
+    let tries = |url: &str| std::fs::read_to_string(home.0.join("yt-dlp.log")).unwrap_or_default().matches(url).count();
+    let eventually = |what: &str, done: &dyn Fn() -> bool| {
+        for _ in 0..200 {
+            if done() {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        panic!("never: {what}");
+    };
+
+    // Play answers with the search playing, before yt-dlp has the file.
     let (ok, out, err) = run(&["--json", "play", "yt:", "night", "tempo"]);
     assert!(ok, "{err}");
     let status: serde_json::Value = serde_json::from_str(&out).unwrap();
     let track = &status["status"]["track"];
-    assert_eq!(track["source"], "youtube");
-    assert_eq!(track["title"], "City Pop Mix");
+    assert_eq!((&track["source"], &track["title"], &track["downloading"]), (&"youtube".into(), &"night tempo".into(), &true.into()));
+    eventually("the file plays", &|| now()["track"]["title"] == "City Pop Mix");
+    let track = &now()["track"];
     assert_eq!(track["link"], "https://www.youtube.com/watch?v=abc123");
+    assert!(track.get("downloading").is_none(), "{track}");
     assert!(home.0.join("cache/youtube/abc123.m4a").exists());
-
     let calls = std::fs::read_to_string(home.0.join("yt-dlp.log")).unwrap();
     assert!(calls.contains("-f bestaudio[ext=m4a]"), "{calls}");
     assert!(calls.trim_end().ends_with("-- ytsearch1:night tempo"), "{calls}");
 
+    // Add answers at once too, and clearing the queue stops the download.
+    let asked = std::time::Instant::now();
+    let (ok, _, err) = run(&["add", "https://youtu.be/slow"]);
+    assert!(ok, "{err}");
+    assert!(asked.elapsed() < Duration::from_millis(1500), "add waited {:?} for a 3 s download", asked.elapsed());
+    eventually("the slow download starts", &|| tries("youtu.be/slow") == 1);
+    run(&["clear"]);
+    assert_eq!(now()["queue_len"], 0);
+
+    // A video that cannot be had leaves the queue, and the player says why.
     let (ok, _, err) = run(&["add", "https://youtu.be/missing"]);
-    assert!(!ok);
-    assert!(err.contains("Video unavailable"), "{err}");
-    let tries = |url: &str| std::fs::read_to_string(home.0.join("yt-dlp.log")).unwrap().matches(url).count();
+    assert!(ok, "{err}");
+    eventually("the missing video leaves", &|| now()["queue_len"] == 0 && tries("youtu.be/missing") == 1);
+    assert!(now()["error"].as_str().unwrap().contains("Video unavailable"), "{}", now());
+    std::thread::sleep(Duration::from_millis(200));
     assert_eq!(tries("youtu.be/missing"), 1, "an unavailable video is not asked for again");
 
     // YouTube refuses a download now and then and lets it through a moment later.
-    let (ok, _, err) = run(&["add", "https://youtu.be/flaky"]);
-    assert!(ok, "{err}");
+    run(&["add", "https://youtu.be/flaky"]);
+    eventually("the flaky video arrives", &|| {
+        let (_, out, _) = run(&["--json", "queue"]);
+        out.contains("abc123.m4a") && !out.contains("youtu.be/flaky\"")
+    });
     assert_eq!(tries("youtu.be/flaky"), 2);
-    let (ok, _, err) = run(&["add", "https://youtu.be/refused"]);
-    assert!(!ok);
-    assert!(err.contains("HTTP Error 403"), "{err}");
+    run(&["clear"]);
+    run(&["add", "https://youtu.be/refused"]);
+    eventually("the refused video leaves", &|| now()["queue_len"] == 0 && tries("youtu.be/refused") == 2);
+    assert!(now()["error"].as_str().unwrap().contains("HTTP Error 403"), "{}", now());
     assert_eq!(tries("youtu.be/refused"), 2, "asked again once, not forever");
 }
 

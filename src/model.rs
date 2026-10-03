@@ -43,6 +43,10 @@ pub struct Track {
     /// whose tags hold the picture.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub art: Option<String>,
+    /// A YouTube track still downloading: `uri` is its link or search until
+    /// the file is here, and it plays as soon as it is.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub downloading: bool,
 }
 
 impl Track {
@@ -57,6 +61,7 @@ impl Track {
             duration_ms: 0,
             link: None,
             art: None,
+            downloading: false,
         }
     }
 
@@ -119,6 +124,9 @@ impl Status {
             State::Paused => "⏸",
             State::Stopped => "■",
         };
+        if track.downloading {
+            return format!("{icon} {}  downloading", track.label());
+        }
         let mut line = format!("{icon} {}  {}", track.label(), clock(self.position_ms));
         if track.duration_ms > 0 {
             line.push_str(&format!(" / {}", clock(track.duration_ms)));
@@ -153,6 +161,8 @@ mod tests {
             error: None,
         };
         assert_eq!(status.line(), "▶ 晴天 · 周杰倫  1:23 / 4:29");
+        let status = Status { track: Some(crate::youtube::pending("ytsearch1:plastic love")), position_ms: 0, ..status };
+        assert_eq!(status.line(), "▶ plastic love  downloading", "a frozen 0:00 would look stuck");
     }
 
     #[test]
