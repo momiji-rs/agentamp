@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 """Times the window's start in real terminals, on a Hyprland desktop.
 
-    scripts/terminal-bench.py [--runs 10] [--terminals ghostty,foot,alacritty] [BINARY]
+    scripts/terminal-bench.py [--runs 10] [--terminals ghostty,ghostty-warm,foot,alacritty] [BINARY]
 
 Each run opens a terminal running the window on a headless output, out
 of the user's sight (workspace 6, silently), and reads its AGENTAMP_TRACE
 marks. Times are milliseconds from asking Hyprland to launch the terminal:
 the median and the slowest run. The terminal's own start counts, since a
 user waits for it too; what it takes the terminal to put the last frame on
-glass is not measured.
+glass is not measured. `cover drawn` is the last frame with the cover,
+after any resize the terminal made once the window was up.
+
+`ghostty-warm` opens each window in a Ghostty that is already running,
+through its `new-window-command` D-Bus action: `ghostty -e` always starts
+a new process, single instance or not. The harness starts that Ghostty
+itself, under its own class, and leaves it running.
 """
 
 import argparse
@@ -23,11 +29,21 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 OUTPUT = "agentamp-shot"
 CLASS = "agentamp.shot"
+# The running Ghostty's class: one per application, so the cold runs of
+# `ghostty` must not share it.
+WARM = "agentamp.warm"
+SINGLE = "--gtk-single-instance=true"
 
+# (command, window class). A running Ghostty starts the window's command in
+# its own environment, so the warm command carries the variables itself.
 TERMINALS = {
-    "ghostty": "ghostty --class={cls} -e {cmd}",
-    "foot": "foot --app-id={cls} {cmd}",
-    "alacritty": "alacritty --class {cls} -e {cmd}",
+    "ghostty": ("ghostty --class={cls} -e {cmd}", CLASS),
+    "ghostty-warm": (
+        "busctl --user call -- {cls} /{path} org.gtk.Actions Activate 'sava{{sv}}' new-window-command 1 as {argv} 0",
+        WARM,
+    ),
+    "foot": ("foot --app-id={cls} {cmd}", CLASS),
+    "alacritty": ("alacritty --class {cls} -e {cmd}", CLASS),
 }
 
 
@@ -43,24 +59,36 @@ def now_us():
     return time.time_ns() // 1000
 
 
-def setup():
+def setup(terminals):
     if OUTPUT not in hypr("monitors", "all"):
         hypr("output", "create", "headless", OUTPUT)
-    lua(f"hl.window_rule({{ match = {{ class = '{CLASS.replace('.', '[.]')}' }}, workspace = '6 silent' }})")
+    for cls in (CLASS, WARM):
+        lua(f"hl.window_rule({{ match = {{ class = '{cls.replace('.', '[.]')}' }}, workspace = '6 silent' }})")
+    if "ghostty-warm" in terminals and subprocess.run(["pgrep", "-f", f"class={WARM}"], capture_output=True).returncode:
+        lua(f"hl.exec_cmd('ghostty --class={WARM} {SINGLE} --initial-window=false --quit-after-last-window-closed=false')")
+        time.sleep(2)
 
 
-def close():
-    lua(f"hl.dispatch(hl.dsp.window.close({{ window = 'class:{CLASS}' }}))")
+def close(cls):
+    lua(f"hl.dispatch(hl.dsp.window.close({{ window = 'class:{cls}' }}))")
     for _ in range(100):
-        if f"class: {CLASS}" not in hypr("clients"):
+        if f"class: {cls}" not in hypr("clients"):
             return
         time.sleep(0.02)
 
 
-def done(lines):
-    """The cover has been drawn: a frame after the cover was applied."""
+# How long the trace must stay quiet after the cover is drawn: a terminal
+# may resize the window after its first frame, and the frame after the
+# last resize is the one the user sees.
+SETTLE = 0.3
+
+
+def drawn(lines):
+    """The last frame after the cover was applied, if any."""
     applied = next((i for i, line in enumerate(lines) if line.endswith("applied art")), None)
-    return applied is not None and any(" frame " in f" {line}" for line in lines[applied:])
+    if applied is None:
+        return None
+    return next((line for line in reversed(lines[applied:]) if line.split(" ")[1] == "frame"), None)
 
 
 def run_once(binary, terminal, trace):
@@ -69,17 +97,23 @@ def run_once(binary, terminal, trace):
     env = f"AGENTAMP_TRACE={shlex.quote(str(trace))}"
     if "AGENTAMP_HOME" in os.environ:
         env += f" AGENTAMP_HOME={shlex.quote(os.path.abspath(os.environ['AGENTAMP_HOME']))}"
-    command = f"{env} " + TERMINALS[terminal].format(cls=CLASS, cmd=shlex.quote(binary))
+    template, cls = TERMINALS[terminal]
+    argv = ["-e", "env", *env.split(" "), binary]
+    argv = f"{len(argv)} " + " ".join(shlex.quote(a) for a in argv)
+    path = cls.replace(".", "/")
+    command = f"{env} " + template.format(cls=cls, path=path, argv=argv, cmd=shlex.quote(binary))
     launched = now_us()
     lua(f"hl.exec_cmd({command!r})".replace("\\'", "'"))
-    lines = []
-    deadline = time.time() + 6
+    lines, changed = [], time.time()
+    deadline = changed + 6
     while time.time() < deadline:
-        lines = trace.read_text().splitlines() if trace.exists() else []
-        if done(lines):
+        now = trace.read_text().splitlines() if trace.exists() else []
+        if now != lines:
+            lines, changed = now, time.time()
+        if drawn(lines) and time.time() - changed > SETTLE:
             break
         time.sleep(0.005)
-    close()
+    close(cls)
     times = {}
     for line in lines:
         at, step = line.split(" ", 1)
@@ -90,8 +124,12 @@ def run_once(binary, terminal, trace):
         elif words[0] == "image":
             step = f"image {words[2]}"
             times[step + " cost"] = int(words[3][:-2]) / 1000
+        elif words[0] == "resize":
+            step = "resize"
         times.setdefault(step, (int(at) - launched) / 1000)
-    times["cover drawn"] = (int(lines[-1].split(" ")[0]) - launched) / 1000 if done(lines) else None
+    last = drawn(lines)
+    times["resizes"] = sum(line.split(" ")[1] == "resize" for line in lines)
+    times["cover drawn"] = (int(last.split(" ")[0]) - launched) / 1000 if last else None
     return times
 
 
@@ -102,7 +140,7 @@ def main():
     parser.add_argument("--terminals", default="ghostty,foot,alacritty")
     args = parser.parse_args()
     trace = ROOT / "target/terminal-bench.trace"
-    setup()
+    setup(args.terminals.split(","))
     for terminal in args.terminals.split(","):
         runs, order = defaultdict(list), []
         for _ in range(args.runs):
@@ -117,6 +155,9 @@ def main():
             values = runs[key]
             if not values:
                 print(f"  {key:<28} never")
+                continue
+            if key == "resizes":
+                print(f"  {key:<28} {statistics.median(values):>9.0f} {max(values):>9.0f}")
                 continue
             print(f"  {key:<28} {statistics.median(values):>9.2f} {max(values):>9.2f}  ({len(values)})")
     trace.unlink(missing_ok=True)
