@@ -11,8 +11,8 @@ cached, on a quiet machine (load below 6). Release build.
 |---|---|---|
 | pseudo-terminal answering as kitty | | 20.8 (one frame) |
 | pseudo-terminal, half blocks | | 6.7 |
-| Ghostty 1.3.1, new process | 211 | 248 |
-| Ghostty 1.3.1, warm (D-Bus `new-window-command`) | 92 | 128 |
+| Ghostty 1.3.1, new process | 211 | 248 (before shared memory) |
+| Ghostty 1.3.1, warm (D-Bus `new-window-command`) | 92 | 128 (before shared memory) |
 | foot | 24.6 | 50, first frame (foot then resizes the window) |
 | Alacritty (half blocks) | | 93 |
 
@@ -57,14 +57,25 @@ Then:
   0.37 ms.
 - A terminal closed without a hang-up signal ends the window, instead of
   leaving it spinning at full CPU (crossterm-rs/crossterm#793).
+- A terminal that never answers the image query now holds the first frame
+  for 500 ms, not ratatui-image's default 2 s (2017 ms to 519 ms, in a
+  pseudo-terminal that answers nothing). Every terminal answers the
+  query's last question, so the cap only bounds a silent one; over SSH a
+  long link still has a round trip to spare.
+- Covers go to kitty-protocol terminals through shared memory where the
+  terminal reads it back, and as base64 elsewhere (over SSH, for one).
+  Ghostty's first frame with a cover drew in 21 to 41 ms instead of 94 to
+  149 ms (under load, the two builds alternated); no objects were left in
+  `/dev/shm`. Both use ratatui-image's `QueryStdioOptions`, which is
+  public, though its doc said to use it only for the Text Sizing Protocol;
+  that doc is fixed upstream in
+  ratatui/ratatui-image#216 with the measurement in
+  [linyiru/ratatui-image-query-options](https://github.com/linyiru/ratatui-image-query-options).
 
 ## What is left
 
-- **The image query waits 2 s on a terminal that answers nothing**
-  (measured 2013 ms). ratatui-image 12.0.0-rc.0 keeps the timeout in
-  `QueryStdioOptions`, which it does not export.
-- **Kitty shared memory** would cut Ghostty's first draw from 31.5 to
-  7.6 ms (measured with a local patch, not shipped). It needs the same
-  private options.
-- Encoding a cover for kitty: about 3.9 ms to resize (Triangle) and 3.4 ms
-  for base64. Sixel: 176 KB per cover, about 23 ms to encode.
+- Resizing a cover for kitty (Triangle) costs about 3.9 ms on the drawing
+  thread, on a quiet machine. Sixel: 176 KB per cover, about 23 ms to
+  encode.
+- foot resizes the window twice after its first frame; the settled frame
+  has not been timed on a quiet machine yet.
