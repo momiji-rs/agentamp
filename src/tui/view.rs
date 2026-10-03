@@ -12,8 +12,10 @@ use ratatui::widgets::{Block, Cell, Clear, Padding, Paragraph, Row, Table};
 
 use super::cover::Picture;
 use super::icons::{self, Icons};
+use super::library::{self, Focus, Library, Opened, SHELVES};
 use super::spectrum::{Spectrum, Tuning};
 use crate::model::{Source, State, Status, Track, clock};
+use crate::spotify_search::Hit;
 
 const BG: Color = Color::Rgb(0, 0, 0);
 const PANEL: Color = Color::Rgb(18, 18, 18);
@@ -27,6 +29,7 @@ const YOUTUBE: Color = Color::Rgb(255, 51, 51);
 const FILES: Color = Color::Rgb(80, 155, 245);
 const RULE: Color = Color::Rgb(90, 90, 90);
 const CAP: Color = Color::Rgb(220, 220, 220);
+const SELECTED: Color = Color::Rgb(42, 42, 42);
 
 /// Below these widths the side panels give their room to the queue.
 const WITH_BOTH_PANELS: u16 = 110;
@@ -82,6 +85,8 @@ pub struct View {
     pub spectrum: Spectrum,
     /// What shapes them. Only developer mode changes it.
     pub tuning: Tuning,
+    /// The library's shelves and the pages opened from them.
+    pub library: Library,
 }
 
 impl Default for View {
@@ -105,6 +110,7 @@ impl Default for View {
             since_ms: 0,
             spectrum: Spectrum::default(),
             tuning: Tuning::DEFAULT,
+            library: Library::default(),
         }
     }
 }
@@ -180,17 +186,24 @@ pub fn draw(frame: &mut Frame, view: &View) {
     let area = frame.area();
     frame.render_widget(Block::new().style(Style::new().bg(BG)), area);
     let (columns, player, footer) = regions(area);
+    // An open page takes the queue's place.
+    let middle = |frame: &mut Frame, area| match view.library.pages.last() {
+        Some(opened) => page(frame, area, view, opened),
+        None => queue(frame, area, view),
+    };
     match columns.len() {
         3 => {
             library(frame, columns[0], view);
-            queue(frame, columns[1], view);
+            middle(frame, columns[1]);
             now_playing(frame, columns[2], view);
         }
         2 => {
             library(frame, columns[0], view);
-            queue(frame, columns[1], view);
+            middle(frame, columns[1]);
         }
-        _ => queue(frame, columns[0], view),
+        // Too narrow for the library beside the rest: it shows while it has the keys.
+        _ if view.library.focus == Focus::Shelves => library(frame, columns[0], view),
+        _ => middle(frame, columns[0]),
     }
     player_bar(frame, player, view);
     footer_line(frame, footer, view);
@@ -223,30 +236,201 @@ fn byline(track: &Track) -> Line<'static> {
     Line::from(spans)
 }
 
+/// The shelves, then what played last.
 fn library(frame: &mut Frame, area: Rect, view: &View) {
-    let dim = Style::new().fg(SUBDUED);
-    let mut lines = vec![
-        Line::styled("Sources", Style::new().fg(TEXT).add_modifier(Modifier::BOLD)),
-        Line::from(vec![Span::styled("● ", Style::new().fg(GREEN)), Span::raw("Spotify")]),
-        Line::styled("  links, spotify: URIs", dim),
-        Line::from(vec![Span::styled("● ", Style::new().fg(YOUTUBE)), Span::raw("YouTube")]),
-        Line::styled("  links, yt: searches", dim),
-        Line::from(vec![Span::styled("● ", Style::new().fg(FILES)), Span::raw("Files")]),
-        Line::styled("  files and folders", dim),
-        Line::raw(""),
-        Line::styled("Recently played", Style::new().fg(TEXT).add_modifier(Modifier::BOLD)),
-    ];
-    if view.history.is_empty() {
-        lines.push(Line::styled("Nothing yet", Style::new().fg(FAINT)));
-    }
-    for track in view.history.iter().rev() {
-        lines.push(Line::raw(track.title.clone()));
-        lines.push(byline(track));
-    }
     let block = panel("Your Library");
     let inner = block.inner(area);
     frame.render_widget(block, area);
-    frame.render_widget(Paragraph::new(lines).style(Style::new().fg(TEXT)), inner);
+    let shelves = &view.library;
+    let open = shelves.pages.first().map(|o| o.target.as_str());
+    // From the panel's edge, so the selection's mark sits in its padding.
+    let rows = Rect { x: area.x, width: inner.right() - area.x, ..inner };
+    let mut lines: Vec<Line> = SHELVES
+        .iter()
+        .enumerate()
+        .map(|(i, (target, name))| {
+            let marked = shelves.focus == Focus::Shelves && i == shelves.shelf;
+            let name_style = if open == Some(*target) { Style::new().fg(GREEN) } else { Style::new().fg(TEXT) };
+            let count = shelves.counts.get(*target).map(|n| n.to_string()).unwrap_or_default();
+            let used = 3 + unicode_width::UnicodeWidthStr::width(*name) + count.len();
+            Line::from(vec![
+                Span::styled(if marked { "▸" } else { " " }, Style::new().fg(GREEN)),
+                Span::styled(if *target == "liked" { "♥ " } else { "  " }, Style::new().fg(TEXT)),
+                Span::styled(*name, name_style),
+                Span::raw(" ".repeat(usize::from(rows.width).saturating_sub(used))),
+                Span::styled(count, Style::new().fg(SUBDUED)),
+            ])
+        })
+        .collect();
+    lines.push(Line::raw(""));
+    lines.push(Line::styled(" Recently played", Style::new().fg(TEXT).add_modifier(Modifier::BOLD)));
+    if view.history.is_empty() {
+        lines.push(Line::styled(" Nothing yet", Style::new().fg(FAINT)));
+    }
+    for track in view.history.iter().rev() {
+        lines.push(Line::raw(format!(" {}", track.title)));
+        let mut by = byline(track);
+        by.spans.insert(0, Span::raw(" "));
+        lines.push(by);
+    }
+    frame.render_widget(Paragraph::new(lines).style(Style::new().fg(TEXT)), rows);
+}
+
+/// What a page is, under its title: "Album · Mariya Takeuchi".
+fn kind(opened: &Opened, by: &str) -> String {
+    let target = opened.target.as_str();
+    let kind = if target.contains(":folder:") {
+        "Folder"
+    } else if target == "liked" {
+        "Playlist"
+    } else if let Some(rest) = target.strip_prefix("spotify:") {
+        match rest.split(':').next() {
+            Some("artist") => "Artist",
+            Some("album") => "Album",
+            Some("playlist") => "Playlist",
+            _ => "",
+        }
+    } else if target == "top" {
+        ""
+    } else {
+        "Your Library"
+    };
+    [kind, by].into_iter().filter(|s| !s.is_empty()).collect::<Vec<_>>().join(" · ")
+}
+
+/// How a section's rows are laid out: the width of its numbers, and
+/// whether it has a middle column.
+#[derive(Clone, Copy)]
+struct Columns {
+    number: u16,
+    wide: bool,
+}
+
+/// One row of a page.
+enum Entry<'a> {
+    Heading(String),
+    Note(String, Color),
+    Blank,
+    /// An item, its place across the page, its number in its section, and
+    /// its section's columns.
+    Item(&'a Hit, usize, usize, Columns),
+}
+
+/// A Spotify page in the queue's place: its title, then each section's
+/// items, one a row, scrolled to keep the selection in sight.
+fn page(frame: &mut Frame, area: Rect, view: &View, opened: &Opened) {
+    frame.render_widget(Block::new().style(Style::new().bg(PANEL)), area);
+    fade(frame.buffer_mut(), area, [40, 40, 40]);
+    let inner = area.inner(Margin::new(1, 0));
+    let loaded = opened.page.as_ref().and_then(|p| p.as_ref().ok());
+    let title = loaded.map_or(opened.title.as_str(), |p| p.title.as_str());
+    let by = loaded.map_or("", |p| p.by.as_str());
+    let header = vec![
+        Line::from(vec![
+            Span::styled("← ", Style::new().fg(SUBDUED)),
+            Span::styled(title.to_string(), Style::new().fg(TEXT).add_modifier(Modifier::BOLD)),
+        ]),
+        Line::styled(format!("  {}", kind(opened, by)), Style::new().fg(SUBDUED)),
+    ];
+    let mut rest = inner;
+    frame.render_widget(Paragraph::new(header), take(&mut rest, 3));
+
+    let mut entries = Vec::new();
+    match &opened.page {
+        None => entries.push(Entry::Note("Loading…".into(), SUBDUED)),
+        Some(Err(error)) => entries.push(Entry::Note(error.clone(), RED)),
+        Some(Ok(page)) => {
+            let mut at = 0;
+            for (i, section) in page.sections.iter().enumerate() {
+                if i > 0 {
+                    entries.push(Entry::Blank);
+                }
+                let shown = section.items.len() as u32;
+                entries.push(Entry::Heading(if section.total > shown {
+                    format!("{} ({} in all)", section.name, section.total)
+                } else {
+                    section.name.clone()
+                }));
+                if section.items.is_empty() {
+                    entries.push(Entry::Note("none here".into(), FAINT));
+                }
+                // The middle column only when some item has something to put in it.
+                let wide = rest.width >= 60 && section.items.iter().any(|hit| !detail(hit).is_empty());
+                // As wide as the last number of all, so the column holds still while it loads.
+                let columns = Columns { number: (section.total.max(shown).to_string().len() as u16).max(3), wide };
+                for (n, hit) in section.items.iter().enumerate() {
+                    entries.push(Entry::Item(hit, at, n + 1, columns));
+                    at += 1;
+                }
+            }
+            if opened.more {
+                entries.push(Entry::Note("Loading more…".into(), SUBDUED));
+            }
+        }
+    }
+    let focused = view.library.focus == Focus::Page;
+    let selected = entries.iter().position(|e| matches!(e, Entry::Item(_, at, _, _) if *at == opened.selected));
+    // The selection stays a row clear of the bottom; the top stays put until it must move.
+    let height = usize::from(rest.height);
+    let first = selected.map_or(0, |s| (s + 2).saturating_sub(height));
+    for (row, entry) in entries.iter().skip(first).take(height).enumerate() {
+        let line = Rect { y: rest.y + row as u16, height: 1, ..rest };
+        match entry {
+            Entry::Heading(text) => {
+                frame.render_widget(Paragraph::new(Line::styled(text.clone(), Style::new().fg(TEXT).add_modifier(Modifier::BOLD))), line)
+            }
+            Entry::Note(text, color) => frame.render_widget(Paragraph::new(Line::styled(format!(" {text}"), Style::new().fg(*color))), line),
+            Entry::Blank => {}
+            Entry::Item(hit, at, n, columns) => {
+                let chosen = focused && *at == opened.selected;
+                if chosen {
+                    let band = Rect { x: area.x, width: area.width, ..line };
+                    frame.buffer_mut().set_style(band, Style::new().bg(SELECTED));
+                    frame.buffer_mut()[(area.x, line.y)].set_char('▸').set_fg(GREEN);
+                }
+                frame.render_widget(item(hit, *n, title, *columns), line);
+            }
+        }
+    }
+}
+
+/// What an item's middle column says: a track's album, an album's
+/// artists, a playlist's maker.
+fn detail(hit: &Hit) -> String {
+    if hit.target.starts_with("spotify:track:") {
+        hit.album.clone().unwrap_or_default()
+    } else if hit.target.contains(":folder:") {
+        "Folder".into()
+    } else {
+        hit.artist.clone()
+    }
+}
+
+/// An item's row: a track with its number, artists, album and length; an
+/// album with its artists and year; a playlist with who made it.
+fn item(hit: &Hit, n: usize, page_title: &str, columns: Columns) -> Table<'static> {
+    let dim = Style::new().fg(SUBDUED);
+    let track = hit.target.starts_with("spotify:track:");
+    let mut title = vec![Span::styled(hit.title.clone(), Style::new().fg(TEXT))];
+    // An artist's own songs need not say whose they are.
+    if track && !hit.artist.is_empty() && hit.artist != page_title {
+        title.push(Span::styled(format!(" · {}", hit.artist), dim));
+    }
+    let end = if track {
+        hit.duration_ms.map(clock).unwrap_or_default()
+    } else {
+        hit.year.map(|y| y.to_string()).unwrap_or_default()
+    };
+    let number = if track { n.to_string() } else { String::new() };
+    let mut cells = vec![Cell::from(Line::styled(number, dim).alignment(Alignment::Right)), Cell::from(Line::from(title))];
+    let mut widths = vec![Constraint::Length(columns.number), Constraint::Fill(3)];
+    if columns.wide {
+        cells.push(Cell::from(Line::styled(detail(hit), dim)));
+        widths.push(Constraint::Fill(2));
+    }
+    cells.push(Cell::from(Line::styled(end, dim).alignment(Alignment::Right)));
+    widths.push(Constraint::Length(5));
+    Table::new(vec![Row::new(cells)], widths).column_spacing(2)
 }
 
 /// The queue as Spotify draws an album page: a header tinted by the
@@ -592,18 +776,28 @@ fn footer_line(frame: &mut Frame, area: Rect, view: &View) {
     } else if let Some(error) = &view.status.error {
         Line::styled(format!(" {error}"), Style::new().fg(RED))
     } else {
+        let library = &view.library;
+        let tab = match library.next_focus(true) {
+            Focus::Player => "player",
+            Focus::Shelves => "library",
+            Focus::Page => "page",
+        };
+        let player = [("space", "play/pause"), ("n", "next"), ("b", "back"), ("s", "stop"), ("←→", "seek"), ("+-", "volume")];
+        let hints: Vec<(&str, &str)> = match library.focus {
+            Focus::Player => player.into_iter().chain([("/", "play"), ("a", "add"), ("tab", tab), ("q", "quit")]).collect(),
+            Focus::Shelves => [("↑↓", "select"), ("enter", "open"), ("esc", "back"), ("tab", tab), ("space", "play/pause"), ("q", "quit")].into(),
+            Focus::Page => {
+                let add = library.pages.last().and_then(Opened::hit).is_some_and(|h| library::plays(&h.target));
+                let mut keys = vec![("↑↓", "select"), ("enter", "open/play")];
+                if add {
+                    keys.push(("a", "add"));
+                }
+                keys.extend([("esc", "back"), ("tab", tab), ("space", "play/pause"), ("q", "quit")]);
+                keys
+            }
+        };
         let mut spans = vec![Span::raw(" ")];
-        for (k, what) in [
-            ("space", "play/pause"),
-            ("n", "next"),
-            ("b", "back"),
-            ("s", "stop"),
-            ("←→", "seek"),
-            ("+-", "volume"),
-            ("/", "play"),
-            ("a", "add"),
-            ("q", "quit"),
-        ] {
+        for (k, what) in hints {
             spans.push(Span::styled(k, key));
             spans.push(Span::styled(format!(" {what}   "), dim));
         }

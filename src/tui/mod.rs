@@ -8,6 +8,7 @@ pub mod cover;
 mod dev;
 mod graphics;
 mod icons;
+mod library;
 mod spectrum;
 mod view;
 
@@ -21,10 +22,12 @@ use ratatui::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, Ke
 use ratatui::crossterm::terminal::{BeginSynchronizedUpdate, EndSynchronizedUpdate};
 use ratatui::layout::Rect;
 
+use crate::browse::Page;
 use crate::ipc::Request;
 use crate::model::{State, Status, Track};
 use crate::paths::Paths;
 pub use view::View;
+use library::{Choice, Focus};
 use view::{Cover, Prompt, PromptKind};
 
 /// How often the window asks the daemon what it is doing.
@@ -42,6 +45,10 @@ enum Update {
     Answer(Result<String, String>),
     /// A cover loaded, or failed to.
     Art { art: String, loaded: Option<art::Art> },
+    /// A Spotify page, or the part of one from `offset`.
+    Page { target: String, offset: u32, page: Result<Page, String> },
+    /// How many a shelf of the library holds.
+    Count { shelf: String, total: u32 },
 }
 
 /// What wakes the window: the daemon or the terminal.
@@ -231,6 +238,8 @@ fn event_loop(
                             Update::Snapshot { .. } => "applied snapshot",
                             Update::Answer(_) => "applied answer",
                             Update::Art { .. } => "applied art",
+                            Update::Page { .. } => "applied page",
+                            Update::Count { .. } => "applied count",
                         });
                     }
                     if let (Some(graphics), Update::Art { art, loaded: Some(loaded) }) = (graphics.as_mut(), &mut update) {
@@ -321,6 +330,7 @@ fn watch_hang_up(wakes: mpsc::Sender<Wake>) {
 /// player's state. Play and add can take seconds (a YouTube download), so
 /// they run on their own threads and controls stay quick meanwhile.
 fn link(paths: Paths, requests: mpsc::Receiver<Request>, updates: mpsc::Sender<Wake>) {
+    let mut counted = false;
     loop {
         // First at once, so the window opens on the player's state.
         if let Ok(update) = snapshot(&paths) {
@@ -328,13 +338,25 @@ fn link(paths: Paths, requests: mpsc::Receiver<Request>, updates: mpsc::Sender<W
             if updates.send(update.into()).is_err() {
                 return;
             }
+            // Once the player is there: the window does not start it.
+            if !counted {
+                counted = true;
+                let (paths, updates) = (paths.clone(), updates.clone());
+                std::thread::spawn(move || count_shelves(&paths, &updates));
+            }
         }
         match requests.recv_timeout(POLL) {
             Ok(request) => {
-                let slow = matches!(request, Request::Play { .. } | Request::Add { .. });
+                let slow = matches!(request, Request::Play { .. } | Request::Add { .. } | Request::Browse { .. });
                 let (paths, updates) = (paths.clone(), updates.clone());
                 let job = move || {
-                    let _ = updates.send(Update::Answer(answer(&paths, &request)).into());
+                    let update = match &request {
+                        Request::Browse { target, offset, .. } => {
+                            Update::Page { target: target.clone(), offset: *offset, page: browsed(&paths, &request, true) }
+                        }
+                        _ => Update::Answer(answer(&paths, &request)),
+                    };
+                    let _ = updates.send(update.into());
                 };
                 if slow {
                     std::thread::spawn(job);
@@ -370,6 +392,25 @@ fn answer(paths: &Paths, request: &Request) -> Result<String, String> {
         Request::Play { .. } | Request::Add { .. } => crate::describe(request, &data).unwrap_or_default(),
         _ => String::new(),
     })
+}
+
+/// A Spotify page, as the daemon gives it.
+fn browsed(paths: &Paths, request: &Request, start: bool) -> Result<Page, String> {
+    let data = crate::send(paths, request, start).map_err(|e| format!("{e:#}"))?;
+    serde_json::from_value(data).map_err(|e| format!("{e:#}"))
+}
+
+/// The size of each counted shelf, one item asked of each. Without a
+/// Spotify sign-in they stay without one.
+fn count_shelves(paths: &Paths, updates: &mpsc::Sender<Wake>) {
+    for shelf in library::COUNTED {
+        let request = Request::Browse { target: shelf.into(), offset: 0, count: 1 };
+        let Ok(page) = browsed(paths, &request, false) else { return };
+        let Some(section) = page.sections.first() else { continue };
+        if updates.send(Update::Count { shelf: shelf.into(), total: section.total }.into()).is_err() {
+            return;
+        }
+    }
 }
 
 /// The player's state, without starting it.
@@ -415,6 +456,16 @@ impl View {
             }
             Update::Art { art, loaded } => {
                 self.covers.insert(art, loaded.map_or(Cover::Missing, |loaded| Cover::Ready(loaded.picture)));
+                true
+            }
+            Update::Page { target, offset, page } => {
+                if let Some(error) = self.library.loaded(&target, offset, page) {
+                    self.message = Some(Err(error));
+                }
+                true
+            }
+            Update::Count { shelf, total } => {
+                self.library.counts.insert(shelf, total);
                 true
             }
             Update::Answer(answer) => {
@@ -477,6 +528,9 @@ impl View {
             return None;
         }
         self.message = None;
+        if let Some(command) = self.library_key(key) {
+            return command;
+        }
         let status = &mut self.status;
         let request = match key.code {
             KeyCode::Char('q') | KeyCode::Esc => return Some(Command::Quit),
@@ -525,6 +579,49 @@ impl View {
             _ => return None,
         };
         Some(Command::Send(request))
+    }
+}
+
+impl View {
+    /// Acts on a key the library takes: Tab and Esc move between the
+    /// player, the shelves and the pages, and while the shelves or a page
+    /// have the keys, the arrows select and Enter opens or plays. None
+    /// leaves the key to the player.
+    fn library_key(&mut self, key: KeyEvent) -> Option<Option<Command>> {
+        let library = &mut self.library;
+        let by = match key.code {
+            KeyCode::Up => -1,
+            KeyCode::Down => 1,
+            KeyCode::PageUp => -library::LEAP,
+            KeyCode::PageDown => library::LEAP,
+            _ => 0,
+        };
+        match (library.focus, key.code) {
+            (_, KeyCode::Tab) => library.focus = library.next_focus(true),
+            (_, KeyCode::BackTab) => library.focus = library.next_focus(false),
+            (_, KeyCode::Esc) => return library.back().then_some(None),
+            (Focus::Player, _) => return None,
+            // Near the end of what has loaded, more of the page is asked for.
+            (_, _) if by != 0 => return Some(library.step(by).map(Command::Send)),
+            (Focus::Shelves, KeyCode::Enter) => return Some(Some(Command::Send(library.open_shelf()))),
+            (Focus::Page, KeyCode::Enter) => match library.choice()? {
+                Choice::Open(target, title) => return Some(Some(Command::Send(library.open(&target, &title)))),
+                Choice::Play(target) => {
+                    self.busy = true;
+                    return Some(Some(Command::Send(Request::Play { target })));
+                }
+            },
+            (Focus::Page, KeyCode::Char('a')) => {
+                let target = library.pages.last()?.hit()?.target.clone();
+                if !library::plays(&target) {
+                    return Some(None);
+                }
+                self.busy = true;
+                return Some(Some(Command::Send(Request::Add { target, next: false })));
+            }
+            _ => return None,
+        }
+        Some(None)
     }
 }
 

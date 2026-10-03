@@ -3,7 +3,10 @@ use std::path::PathBuf;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use super::*;
+use crate::browse::{Page, Section};
 use crate::model::Source;
+use crate::spotify_search::Hit;
+use library::Focus;
 
 fn track(source: Source, title: &str, artist: &str, album: &str, seconds: u32) -> Track {
     let mut t = Track::placeholder(source, format!("{title}.uri"));
@@ -265,7 +268,9 @@ fn the_album_column_waits_for_an_album() {
         track.album.clear();
     }
     let screen = text(&view, 140, 40);
-    assert!(!screen.contains("Album"), "{screen}");
+    // The queue's header, right of the library's Albums shelf.
+    let header = screen.lines().find_map(|l| l.split_once("Title")).unwrap().1;
+    assert!(!header.contains("Album"), "{screen}");
     assert!(screen.contains("Midnight Pretenders"), "{screen}");
 }
 
@@ -445,4 +450,217 @@ fn the_first_frame_waits_for_the_state_and_its_cover() {
     // Loaded or failed, the frame can go.
     view.apply(Update::Art { art, loaded: None });
     assert!(heard_all(true, &view));
+}
+
+fn song(title: &str, artist: &str, album: &str, uri: &str, seconds: u32) -> Hit {
+    Hit {
+        title: title.into(),
+        artist: artist.into(),
+        album: Some(album.into()),
+        duration_ms: Some(seconds * 1000),
+        ..Hit::new(uri)
+    }
+}
+
+fn section(name: &str, total: u32, items: Vec<Hit>) -> Section {
+    Section { name: name.into(), total, items }
+}
+
+/// Mariya Takeuchi's page as `browse` gave it on 2026-10-03, trimmed.
+fn artist_page() -> Page {
+    let release = |title: &str, year, id: &str| Hit { title: title.into(), year: Some(year), ..Hit::new(&format!("spotify:album:{id}")) };
+    let artist = |name: &str, id: &str| Hit { title: name.into(), ..Hit::new(&format!("spotify:artist:{id}")) };
+    Page {
+        title: "Mariya Takeuchi".into(),
+        by: String::new(),
+        sections: vec![
+            section("Popular", 3, vec![
+                song("Plastic Love", "Mariya Takeuchi", "Variety", "spotify:track:7rU6Iebxzlvqy5t857bKFq", 294),
+                song("September", "Mariya Takeuchi", "Love Songs", "spotify:track:2BHj31ufdEqVK5CkYDp9mA", 247),
+                song("Stay With Me", "Mariya Takeuchi, Tatsuro Yamashita", "Viva Yo", "spotify:track:0Gp3Zl2lWAmhDNQi4C2W3U", 334),
+            ]),
+            section("Releases", 10, vec![
+                release("TRAD", 2014, "4h4LKGYNKz2gXaohJZKXY0"),
+                release("Expressions", 2013, "3lBX7AtzE4JoZaAIBLptRx"),
+            ]),
+            section("Fans also like", 40, vec![
+                artist("Yumi Matsutoya", "1LQQtqc1vQ1neUgZrjYlEU"),
+                artist("Anri", "1QdBbxHvdw8bWbHDYKx6JC"),
+            ]),
+        ],
+    }
+}
+
+fn playlists_page() -> Page {
+    let playlist = |title: &str, owner: &str, id: &str| Hit { title: title.into(), artist: owner.into(), ..Hit::new(id) };
+    Page {
+        title: "Your playlists".into(),
+        by: String::new(),
+        sections: vec![section("Playlists", 88, vec![
+            Hit { title: "Liked Songs".into(), ..Hit::new("liked") },
+            playlist("Jazz Mix", "Spotify", "spotify:playlist:37i9dQZF1EQqA6klNdJvwx"),
+            Hit { title: "Grene".into(), ..Hit::new("spotify:user:12572401:folder:7e65e58f6872a79a") },
+            playlist("80/90s Japanese City Pop", "mert.uslu13 on Instagram", "spotify:playlist:0nz3cRJG7ZdCzdWQmIPp56"),
+        ])],
+    }
+}
+
+fn browse(target: &str, offset: u32) -> Option<Command> {
+    Some(Command::Send(Request::Browse { target: target.into(), offset, count: 50 }))
+}
+
+fn counted(mut view: View) -> View {
+    for (shelf, total) in [("liked", 9688), ("playlists", 88), ("albums", 675), ("artists", 260)] {
+        view.apply(Update::Count { shelf: shelf.into(), total });
+    }
+    view
+}
+
+#[test]
+fn the_library_opens_its_shelves_in_the_queues_place() {
+    let mut view = counted(demo());
+    let screen = text(&view, 140, 40);
+    for expected in ["♥ Liked Songs", "9688", "Playlists", "675", "Top this month", "Recently played", "tab library"] {
+        assert!(screen.contains(expected), "missing {expected:?} in\n{screen}");
+    }
+    assert_eq!(press(&mut view, KeyCode::Tab), None);
+    assert_eq!(view.library.focus, Focus::Shelves);
+    // The arrows select now, and leave the volume alone.
+    assert_eq!(press(&mut view, KeyCode::Down), None);
+    assert_eq!(view.status.volume, 80);
+    assert!(text(&view, 140, 40).contains("▸  Playlists"), "{}", text(&view, 140, 40));
+    assert_eq!(press(&mut view, KeyCode::Enter), browse("playlists", 0));
+    let loading = text(&view, 140, 40);
+    assert!(loading.contains("← Playlists") && loading.contains("Loading…") && !loading.contains("Next in queue"), "{loading}");
+
+    view.apply(Update::Page { target: "playlists".into(), offset: 0, page: Ok(playlists_page()) });
+    let screen = text(&view, 140, 40);
+    for expected in ["← Your playlists", "Your Library", "Playlists (88 in all)", "Jazz Mix", "mert.uslu13 on Instagram", "Folder", "enter open/play"] {
+        assert!(screen.contains(expected), "missing {expected:?} in\n{screen}");
+    }
+    assert_eq!(view.library.counts["playlists"], 88);
+    // A folder opens; it cannot be queued.
+    press(&mut view, KeyCode::Down);
+    press(&mut view, KeyCode::Down);
+    assert_eq!(press(&mut view, KeyCode::Char('a')), None);
+    assert!(!view.busy && view.prompt.is_none());
+    assert_eq!(press(&mut view, KeyCode::Enter), browse("spotify:user:12572401:folder:7e65e58f6872a79a", 0));
+    assert!(text(&view, 140, 40).contains("← Grene"));
+    // Back to the playlists, where they were left.
+    assert_eq!(press(&mut view, KeyCode::Esc), None);
+    assert_eq!(view.library.pages.len(), 1);
+    assert_eq!(view.library.pages[0].selected, 2);
+    // A page that comes after it was left is let go.
+    view.apply(Update::Page { target: "spotify:user:12572401:folder:7e65e58f6872a79a".into(), offset: 0, page: Ok(playlists_page()) });
+    assert_eq!(view.library.pages.len(), 1);
+    // The queue comes back.
+    assert_eq!(press(&mut view, KeyCode::Esc), None);
+    assert_eq!(view.library.focus, Focus::Shelves);
+    assert!(text(&view, 140, 40).contains("Next in queue"));
+    assert_eq!(press(&mut view, KeyCode::Esc), None);
+    assert_eq!(view.library.focus, Focus::Player);
+    assert_eq!(press(&mut view, KeyCode::Down), Some(Command::Send(Request::Volume { percent: 75 })));
+    assert_eq!(press(&mut view, KeyCode::Esc), Some(Command::Quit));
+}
+
+#[test]
+fn a_page_plays_and_adds_what_is_selected() {
+    let mut view = counted(demo());
+    view.library.focus = Focus::Shelves;
+    view.library.shelf = 3;
+    assert_eq!(press(&mut view, KeyCode::Enter), browse("artists", 0));
+    view.apply(Update::Page {
+        target: "artists".into(),
+        offset: 0,
+        page: Ok(Page { title: "Your artists".into(), by: String::new(), sections: vec![section("Artists", 260, vec![
+            Hit { title: "Mariya Takeuchi".into(), ..Hit::new("spotify:artist:3WwGRA2o4Ux1RRMYaYDh7N") },
+        ])] }),
+    });
+    assert_eq!(press(&mut view, KeyCode::Enter), browse("spotify:artist:3WwGRA2o4Ux1RRMYaYDh7N", 0));
+    view.apply(Update::Page { target: "spotify:artist:3WwGRA2o4Ux1RRMYaYDh7N".into(), offset: 0, page: Ok(artist_page()) });
+    let screen = text(&view, 140, 40);
+    for expected in ["← Mariya Takeuchi", "  Artist", "Popular", "Releases (10 in all)", "Fans also like (40 in all)", "2014", "4:54"] {
+        assert!(screen.contains(expected), "missing {expected:?} in\n{screen}");
+    }
+    // An artist's own songs do not repeat whose they are; a duet says so.
+    assert!(!screen.contains("Plastic Love · Mariya"), "{screen}");
+    assert!(screen.contains("Stay With Me · Mariya Takeuchi, Tats"), "{screen}");
+    keep("library", &view, 140, 40);
+    keep("library", &view, 90, 30);
+
+    assert_eq!(press(&mut view, KeyCode::Enter), Some(Command::Send(Request::Play { target: "spotify:track:7rU6Iebxzlvqy5t857bKFq".into() })));
+    assert!(view.busy);
+    view.apply(Update::Answer(Ok(String::new())));
+    press(&mut view, KeyCode::Down);
+    assert_eq!(
+        press(&mut view, KeyCode::Char('a')),
+        Some(Command::Send(Request::Add { target: "spotify:track:2BHj31ufdEqVK5CkYDp9mA".into(), next: false }))
+    );
+    // Tab leaves the page for the player, which keeps it open.
+    press(&mut view, KeyCode::Tab);
+    assert_eq!(view.library.focus, Focus::Player);
+    assert!(text(&view, 140, 40).contains("← Mariya Takeuchi"));
+    assert_eq!(press(&mut view, KeyCode::Char('a')), None);
+    assert!(view.prompt.is_some(), "a is the Add prompt again");
+    press(&mut view, KeyCode::Esc);
+    // Esc from the player closes the pages before it ever quits.
+    assert_eq!(press(&mut view, KeyCode::Esc), None);
+    assert!(view.library.pages.is_empty());
+}
+
+#[test]
+fn a_long_page_loads_more_as_it_is_read() {
+    let mut view = demo();
+    view.library.focus = Focus::Shelves;
+    assert_eq!(press(&mut view, KeyCode::Enter), browse("liked", 0));
+    let fifty = |from: usize| (from..from + 50).map(|i| song(&format!("Song {i}"), "Someone", "", &format!("spotify:track:{i:022}"), 200)).collect();
+    view.apply(Update::Page { target: "liked".into(), offset: 0, page: Ok(Page { title: "Liked Songs".into(), by: String::new(), sections: vec![section("Tracks", 9688, fifty(0))] }) });
+    assert_eq!(view.library.counts["liked"], 9688);
+    assert_eq!(press(&mut view, KeyCode::PageDown), None);
+    assert_eq!(press(&mut view, KeyCode::PageDown), None);
+    assert_eq!(press(&mut view, KeyCode::PageDown), None);
+    assert_eq!(press(&mut view, KeyCode::PageDown), browse("liked", 50), "ten from the end");
+    assert_eq!(press(&mut view, KeyCode::Down), None, "asked for once");
+    let screen = text(&view, 120, 32);
+    // Numbered as wide as the 9688th will be.
+    assert!(screen.contains("▸  42  Song 41"), "the selection stays in sight\n{screen}");
+    assert!(view.library.pages[0].more);
+    view.apply(Update::Page { target: "liked".into(), offset: 50, page: Ok(Page { title: "Liked Songs".into(), by: String::new(), sections: vec![section("Tracks", 9688, fifty(50))] }) });
+    assert_eq!(view.library.pages[0].items().count(), 100);
+    // The bottom stops at the end of what has loaded.
+    for _ in 0..20 {
+        press(&mut view, KeyCode::PageDown);
+    }
+    assert_eq!(view.library.pages[0].selected, 99);
+    // A failure says why, and lets a later step ask again.
+    view.apply(Update::Page { target: "liked".into(), offset: 100, page: Err("Spotify did not answer".into()) });
+    assert_eq!(view.message, Some(Err("Spotify did not answer".into())));
+    assert!(!view.library.pages[0].more);
+}
+
+#[test]
+fn more_of_an_artist_grows_only_the_releases() {
+    let mut view = demo();
+    let uri = "spotify:artist:3WwGRA2o4Ux1RRMYaYDh7N";
+    view.library.open(uri, "Mariya Takeuchi");
+    view.apply(Update::Page { target: uri.into(), offset: 0, page: Ok(artist_page()) });
+    // The Fans also like section has more too, but it is not paged.
+    let mut more = artist_page();
+    more.sections[1].items.truncate(1);
+    more.sections[2].items.clear();
+    view.apply(Update::Page { target: uri.into(), offset: 2, page: Ok(more) });
+    let page = view.library.pages[0].page.clone().unwrap().unwrap();
+    let sizes: Vec<usize> = page.sections.iter().map(|s| s.items.len()).collect();
+    assert_eq!(sizes, [3, 3, 2]);
+}
+
+#[test]
+fn a_narrow_window_shows_the_library_while_it_has_the_keys() {
+    let mut view = counted(demo());
+    assert!(!text(&view, 60, 24).contains("Liked Songs"));
+    press(&mut view, KeyCode::Tab);
+    let screen = text(&view, 60, 24);
+    assert!(screen.contains("♥ Liked Songs") && !screen.contains("Next in queue"), "{screen}");
+    press(&mut view, KeyCode::Enter);
+    assert!(text(&view, 60, 24).contains("← Liked Songs"));
 }

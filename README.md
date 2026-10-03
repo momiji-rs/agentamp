@@ -18,7 +18,9 @@ AgentAmp is an early proof of concept.
 
 ![The Play prompt, taking a link, a yt: search or a path](docs/images/prompt.png)
 
-Both are the tests' demo frames, rendered by `TERMSHOT_PX=48 scripts/screens.sh` with
+![The library open on an artist's page: popular songs, releases, fans also like](docs/images/library.png)
+
+All three are the tests' demo frames, rendered by `TERMSHOT_PX=48 scripts/screens.sh` with
 [termshot](https://github.com/momiji-rs/termshot). Covers are drawn in half
 blocks there; kitty, Ghostty, foot, WezTerm and iTerm2 show the picture.
 
@@ -55,6 +57,13 @@ macOS for every push to `main` and every pull request.
 playing, with the player bar below. Space plays and pauses, `n` skips, `b` goes back, `s`
 stops, the arrows seek and set the volume, `/` plays a link, search or
 path, `a` adds one, and `q` closes the window while the music keeps going.
+Tab moves to the library's shelves (Liked Songs, Playlists, Albums,
+Artists, Top this month) and on to the page opened from one, which shows
+in the queue's place. There the arrows and Page Up and Down select,
+Enter opens an artist, album, playlist or folder and plays a song, `a`
+adds what is selected, and Esc goes back a page, then to the queue.
+Long pages load 50 items at a time as you scroll. The shelves come from
+Spotify with the same queries as `browse`.
 The controls use Nerd Font icons, as Omarchy's terminal font has them;
 `AGENTAMP_ICONS=plain` keeps to characters any monospace font draws.
 Below what is playing, a spectrum analyser draws the sound as the player
