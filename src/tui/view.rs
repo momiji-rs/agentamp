@@ -12,6 +12,7 @@ use ratatui::widgets::{Block, Cell, Clear, Padding, Paragraph, Row, Table};
 
 use super::cover::Picture;
 use super::icons::{self, Icons};
+use super::spectrum::{Spectrum, Tuning};
 use crate::model::{Source, State, Status, Track, clock};
 
 const BG: Color = Color::Rgb(0, 0, 0);
@@ -25,6 +26,7 @@ const RED: Color = Color::Rgb(241, 94, 108);
 const YOUTUBE: Color = Color::Rgb(255, 51, 51);
 const FILES: Color = Color::Rgb(80, 155, 245);
 const RULE: Color = Color::Rgb(90, 90, 90);
+const CAP: Color = Color::Rgb(220, 220, 220);
 
 /// Below these widths the side panels give their room to the queue.
 const WITH_BOTH_PANELS: u16 = 110;
@@ -34,6 +36,11 @@ const MAX_PROGRESS: u16 = 72;
 const VOLUME_WIDTH: u16 = 14;
 /// How far down the queue the cover's tint reaches.
 const FADE_ROWS: u16 = 18;
+/// The spectrum's tallest, and the rows it leaves above it for the details.
+const SPECTRUM_ROWS: u16 = 8;
+const SPECTRUM_ABOVE: u16 = 7;
+/// Bars behind the playing row's mark when the spectrum is not shown.
+const MARK_BARS: usize = 12;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PromptKind {
@@ -71,6 +78,8 @@ pub struct View {
     pub covers: HashMap<String, Cover>,
     /// How long ago the status was read, so the clock runs between reads.
     pub since_ms: u32,
+    /// The bars of the sound as it plays, from the window's analyser.
+    pub spectrum: Spectrum,
 }
 
 impl Default for View {
@@ -92,6 +101,7 @@ impl Default for View {
             icons: &icons::NERD,
             covers: HashMap::new(),
             since_ms: 0,
+            spectrum: Spectrum::default(),
         }
     }
 }
@@ -124,6 +134,28 @@ fn regions(area: Rect) -> (std::rc::Rc<[Rect]>, Rect, Rect) {
         vec![Constraint::Min(0)]
     };
     (Layout::horizontal(panels).spacing(1).split(main), player, footer)
+}
+
+/// How many bars the analyser should make for a window of `area`: the
+/// spectrum's in the Now playing panel, or enough for the playing row's
+/// mark when the panel is not shown.
+pub fn spectrum_bars(area: Rect, view: &View, tuning: &Tuning) -> usize {
+    match spectrum_area(area, view) {
+        Some(rect) => tuning.bars(rect.width),
+        None if view.status.track.is_some() => MARK_BARS,
+        None => 0,
+    }
+}
+
+fn spectrum_area(area: Rect, view: &View) -> Option<Rect> {
+    view.status.track.as_ref()?;
+    let (columns, _, _) = regions(area);
+    if columns.len() != 3 {
+        return None;
+    }
+    let (_, details) = now_playing_layout(panel("").inner(columns[2]));
+    let height = details.height.saturating_sub(SPECTRUM_ABOVE).min(SPECTRUM_ROWS);
+    (height >= 3).then(|| Rect { y: details.bottom() - height, height, ..details })
 }
 
 /// Where the playing track's cover goes, with the colour around it: the
@@ -265,7 +297,7 @@ fn queue(frame: &mut Frame, area: Rect, view: &View) {
     let heading = |text: &'static str| Paragraph::new(Line::styled(text, Style::new().fg(TEXT).add_modifier(Modifier::BOLD)));
     if let Some(track) = current {
         frame.render_widget(heading("Now playing"), take(&mut rest, 1));
-        let mark = equaliser(view.status.state, view.position_ms());
+        let mark = equaliser(view.status.state, &view.spectrum);
         frame.render_widget(table(vec![row(&mark, track, true, wide)]), take(&mut rest, 3));
     }
     if !view.upcoming.is_empty() {
@@ -306,15 +338,21 @@ pub fn summary(tracks: &[&Track]) -> String {
     }
 }
 
-/// The playing row's mark: bars that move with the song, and rest when
-/// it pauses. They change with each position the daemon reports.
-pub fn equaliser(state: State, position_ms: u32) -> String {
+/// The playing row's mark: three bars, the loudest of each third of the
+/// spectrum, which rest when the song pauses.
+pub fn equaliser(state: State, spectrum: &Spectrum) -> String {
     const LEVELS: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
     if state != State::Playing {
         return "▂▂▂".into();
     }
-    let step = position_ms / 500;
-    (0..3u32).map(|bar| LEVELS[((step.wrapping_mul(bar * 2 + 3) + bar * 5) % 8) as usize]).collect()
+    let levels = &spectrum.levels;
+    (0..3)
+        .map(|third| {
+            let part = &levels[levels.len() * third / 3..levels.len() * (third + 1) / 3];
+            let loudest = part.iter().cloned().fold(0.0, f32::max).clamp(0.0, 1.0);
+            LEVELS[(loudest * 7.0).round() as usize]
+        })
+        .collect()
 }
 
 fn row(index: &str, track: &Track, current: bool, wide: bool) -> Row<'static> {
@@ -354,7 +392,56 @@ fn now_playing(frame: &mut Frame, area: Rect, view: &View) {
         lines.push(Line::raw(""));
         lines.push(Line::styled(link.clone(), Style::new().fg(FAINT)));
     }
-    frame.render_widget(Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: true }), details);
+    let spectrum = spectrum_area(frame.area(), view);
+    // The details stop a row above the spectrum.
+    let text = spectrum.map_or(details, |rect| Rect { height: rect.y.saturating_sub(details.y + 1), ..details });
+    frame.render_widget(Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: true }), text);
+    if let Some(rect) = spectrum {
+        bars(rect, frame.buffer_mut(), &view.spectrum, &Tuning::DEFAULT);
+    }
+}
+
+/// Bars in eighth blocks coloured by height, green to yellow to red as
+/// Winamp's were, with a cap where each bar last peaked.
+fn bars(area: Rect, buffer: &mut Buffer, spectrum: &Spectrum, tuning: &Tuning) {
+    const EIGHTHS: [char; 9] = [' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+    let rows = f32::from(area.height);
+    for (i, (&level, &peak)) in spectrum.levels.iter().zip(&spectrum.peaks).enumerate() {
+        let x = area.x + i as u16 * (tuning.width + tuning.gap);
+        if x + tuning.width > area.right() {
+            break;
+        }
+        let height = level * rows;
+        for row in 0..area.height {
+            let fill = (height - f32::from(row)).clamp(0.0, 1.0);
+            let symbol = EIGHTHS[(fill * 8.0).round() as usize];
+            let (y, color) = (area.bottom() - 1 - row, heat((f32::from(row) + 0.5) / rows));
+            for dx in 0..tuning.width {
+                buffer[(x + dx, y)].set_char(symbol).set_fg(color);
+            }
+        }
+        let cap = (peak * rows).floor() as u16;
+        if peak > level + 0.5 / rows && cap < area.height {
+            for dx in 0..tuning.width {
+                buffer[(x + dx, area.bottom() - 1 - cap)].set_char('▔').set_fg(CAP);
+            }
+        }
+    }
+}
+
+/// Green at the floor, yellow, then red at the top.
+fn heat(t: f32) -> Color {
+    let mix = |a: [u8; 3], b: [u8; 3], t: f32| {
+        let [r, g, b] = super::cover::mix(a, b, t);
+        Color::Rgb(r, g, b)
+    };
+    if t < 0.6 {
+        mix([20, 120, 50], [30, 215, 96], t / 0.6)
+    } else if t < 0.85 {
+        mix([30, 215, 96], [240, 220, 60], (t - 0.6) / 0.25)
+    } else {
+        mix([240, 220, 60], [240, 70, 50], (t - 0.85) / 0.15)
+    }
 }
 
 /// The cover and the details below it. Cells are about twice as tall as

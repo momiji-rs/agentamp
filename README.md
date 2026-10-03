@@ -14,7 +14,7 @@ built to be driven by agents as much as by hands.
 
 AgentAmp is an early proof of concept.
 
-![AgentAmp's window: the library, the queue, what is playing and the player bar](docs/images/window.png)
+![AgentAmp's window: the library, the queue, what is playing with its spectrum, and the player bar](docs/images/window.png)
 
 ![The Play prompt, taking a link, a yt: search or a path](docs/images/prompt.png)
 
@@ -33,7 +33,7 @@ TUI changes are checked by looking: `scripts/screens.sh` renders the frames
 the tests keep in `target/screens/` with
 [termshot](https://github.com/momiji-rs/termshot).
 
-Start-up timing, its harnesses and what is left to gain:
+Start-up timing, the cost while playing, and what is left to gain:
 [docs/performance.md](docs/performance.md).
 
 `Cargo.lock` keeps `vergen` at 9.0.6: librespot-core 0.8's build script does
@@ -47,6 +47,10 @@ stops, the arrows seek and set the volume, `/` plays a link, search or
 path, `a` adds one, and `q` closes the window while the music keeps going.
 The controls use Nerd Font icons, as Omarchy's terminal font has them;
 `AGENTAMP_ICONS=plain` keeps to characters any monospace font draws.
+Below what is playing, a spectrum analyser draws the sound as the player
+hears it, before the volume, so it still moves at volume zero. It redraws
+at 60 frames a second while the music plays and stops once its bars have
+fallen after a pause.
 Covers come from Spotify's image server, YouTube's thumbnails and the
 pictures in a file's tags; downloaded ones are kept in
 `~/.cache/agentamp/art/`. Terminals that draw images show them sharp:

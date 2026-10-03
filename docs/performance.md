@@ -1,6 +1,7 @@
-# Start-up performance
+# Performance
 
-How fast the window opens, step by step, and what is left to gain.
+How fast the window opens, step by step, what it costs while it plays, and
+what is left to gain.
 
 ## Current state (verified 2026-10-02, Arch Linux, Ryzen 7 8745HS, Hyprland)
 
@@ -22,6 +23,9 @@ cached, on a quiet machine (load below 6). Release build.
 - A key works as soon as the first frame is out (`input ready`).
 - Most of the time in a real terminal is the terminal's own start. A
   launcher that opens the window in a running Ghostty saves about 120 ms.
+- While a song plays, the spectrum redraws at 60 fps: the window takes
+  3.8% of one core and Ghostty 6.9% drawing it. Paused, once the bars have
+  fallen, the window takes 0% and Ghostty 0.4%.
 
 ## How to measure
 
@@ -36,6 +40,16 @@ on the first frame and times the prompt. `terminal-bench.py` opens real
 terminals on a headless Hyprland output, out of sight. Both read the
 daemon at `AGENTAMP_HOME`; play a long track there first. Load from other
 work skews both: check `uptime` and rerun on a quiet machine.
+
+## While playing (2026-10-02)
+
+Release build in Ghostty 1.3.1, full screen on a 1920×1080 headless
+output (the Now playing panel's spectrum is 11 bars by 8 rows), a local
+AAC file at volume 0, load about 2.4. CPU from `/proc/<pid>/stat`
+(utime + stime) over three 10 s windows: the window 38, 38 and 39 ticks of
+1000, Ghostty 69, 69 and 70. Paused for 10 s: the window 0, Ghostty 4.
+Nearly all of the window's time is on its drawing thread; the thread that
+reads the sound from the player stays under one tick in 5 s.
 
 ## What was fixed (2026-10-02)
 

@@ -6,6 +6,11 @@ rust-version = "1.98"
 license = "MIT"
 description = "A tiny, agent-native terminal music player for Spotify, YouTube and local files"
 
+[features]
+# Developer mode: an overlay in the window that switches the spectrum's
+# choices while it plays. Release builds leave it out.
+dev = []
+
 [dependencies]
 anyhow = "1"
 clap = { version = "4.5", features = ["derive"] }

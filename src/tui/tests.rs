@@ -37,6 +37,10 @@ fn demo() -> View {
         track(Source::Local, "Ride on Time", "Tatsuro Yamashita", "Ride on Time", 357),
         track(Source::Youtube, "Fly-Day Chinatown", "Yasuha", "", 251),
     ];
+    // A moment of a song: heavy bass, a vocal in the middle, falling treble.
+    let levels = vec![0.55, 0.85, 0.7, 0.4, 0.5, 0.75, 0.6, 0.45, 0.35, 0.25, 0.15];
+    let peaks = levels.iter().zip([0.2, 0.05, 0.15, 0.2, 0.1, 0.1, 0.2, 0.1, 0.15, 0.1, 0.1]).map(|(l, p)| l + p).collect();
+    view.spectrum = spectrum::Spectrum { levels, peaks };
     view
 }
 
@@ -356,11 +360,43 @@ fn hour_long_tracks_keep_their_hours_in_the_queue() {
 
 #[test]
 fn the_playing_row_dances_and_rests() {
-    let moving = view::equaliser(State::Playing, 83_000);
-    assert_eq!(moving.chars().count(), 3);
-    assert_ne!(moving, view::equaliser(State::Playing, 83_500));
-    assert_eq!(view::equaliser(State::Paused, 83_000), "▂▂▂");
-    assert!(text(&demo(), 140, 40).contains(&moving));
+    let spectrum = spectrum::Spectrum { levels: vec![0.0, 1.0, 0.2, 0.3, 0.5, 0.4], peaks: vec![0.0; 6] };
+    // The loudest of each third: bass, middle, treble.
+    assert_eq!(view::equaliser(State::Playing, &spectrum), "█▃▅");
+    assert_eq!(view::equaliser(State::Paused, &spectrum), "▂▂▂");
+    assert_eq!(view::equaliser(State::Playing, &spectrum::Spectrum::default()), "▁▁▁", "nothing heard yet");
+    let mut view = demo();
+    view.spectrum = spectrum;
+    assert!(text(&view, 140, 40).contains("█▃▅"));
+}
+
+#[test]
+fn the_spectrum_fills_the_foot_of_now_playing() {
+    let mut view = demo();
+    let area = Rect::new(0, 0, 140, 40);
+    // 32 columns inside the panel: bars two wide, one apart.
+    assert_eq!(view::spectrum_bars(area, &view, &spectrum::Tuning::DEFAULT), 11);
+    let mut levels = vec![0.0; 11];
+    levels[0] = 1.0;
+    levels[1] = 0.5;
+    let mut peaks = levels.clone();
+    peaks[1] = 0.9;
+    view.spectrum = spectrum::Spectrum { levels, peaks };
+    let screen = text(&view, 140, 40);
+    let rows: Vec<&str> = screen.lines().collect();
+    let column = |y: usize| rows[y].chars().skip(107).take(5).collect::<String>();
+    // Eight rows high, ending at the panel's last row: the first bar full,
+    // the second half, its cap hanging higher.
+    assert_eq!(column(33), "██ ██");
+    assert_eq!(column(30), "██ ██");
+    assert_eq!(column(29), "██   ");
+    assert_eq!(column(26), "██ ▔▔");
+    assert_eq!(column(25), "     ", "the row above is the details'");
+    assert!(screen.contains("Stay With Me"));
+    // A narrow window has no panel, so the bars only feed the mark.
+    assert_eq!(view::spectrum_bars(Rect::new(0, 0, 100, 40), &view, &spectrum::Tuning::DEFAULT), 12);
+    view.status.track = None;
+    assert_eq!(view::spectrum_bars(area, &view, &spectrum::Tuning::DEFAULT), 0);
 }
 
 #[test]
