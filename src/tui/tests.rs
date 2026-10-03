@@ -306,6 +306,15 @@ fn queue_totals_round_to_minutes_and_hours() {
 }
 
 #[test]
+fn hour_long_tracks_keep_their_hours_in_the_queue() {
+    // Nothing playing, so the player bar shows no length: this one is the row's.
+    let view = View { upcoming: vec![track(Source::Local, "Mix", "DJ", "Set", 7_200)], ..View::default() };
+    let screen = text(&view, 90, 30);
+    assert!(screen.contains("2:00:00"), "{screen}");
+    keep("queue-hours", &view, 90, 30);
+}
+
+#[test]
 fn the_playing_row_dances_and_rests() {
     let moving = view::equaliser(State::Playing, 83_000);
     assert_eq!(moving.chars().count(), 3);

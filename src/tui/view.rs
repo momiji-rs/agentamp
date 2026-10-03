@@ -234,7 +234,9 @@ fn queue(frame: &mut Frame, area: Rect, view: &View) {
         widths.push(Constraint::Fill(2));
         labels.push(Cell::from("Album"));
     }
-    widths.push(Constraint::Length(5));
+    // As wide as the longest length, so an hour-long track keeps its hours.
+    let time = tracks.iter().filter(|t| t.duration_ms > 0).map(|t| clock(t.duration_ms).len()).max().unwrap_or(0);
+    widths.push(Constraint::Length(time.max(5) as u16));
     labels.push(Cell::from(Line::from("Time").alignment(Alignment::Right)));
     let table = |rows: Vec<Row<'static>>| Table::new(rows, widths.clone()).column_spacing(2);
     frame.render_widget(table(vec![Row::new(labels).style(Style::new().fg(SUBDUED))]), take(&mut rest, 1));
