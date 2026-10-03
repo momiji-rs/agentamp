@@ -15,6 +15,10 @@ use crate::youtube;
 
 /// How many resolved Spotify tracks reach the queue at once.
 const BATCH: usize = 10;
+/// The tracks after the first whose details are read ahead, one request
+/// each. Further ones get theirs when they play, so ten thousand Liked
+/// Songs cost no more than a long playlist.
+const AHEAD: usize = 200;
 
 /// The tracks `target` names. A Spotify album or playlist returns at once
 /// with its first track's details; the rest follow as `Msg::Resolved`. A
@@ -45,7 +49,7 @@ pub async fn tracks(
                 bail!("found no tracks there");
             };
             *first = spotify.details(&first.uri).await?;
-            let rest: Vec<String> = tracks.iter().skip(1).map(|t| t.uri.clone()).collect();
+            let rest: Vec<String> = tracks.iter().skip(1).take(AHEAD).map(|t| t.uri.clone()).collect();
             let (spotify, tx) = (spotify.clone(), tx.clone());
             tokio::spawn(async move {
                 for chunk in rest.chunks(BATCH) {

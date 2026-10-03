@@ -1,5 +1,5 @@
-//! What `play` and `add` were asked for: a Spotify link, a YouTube link or
-//! search, or a file or folder.
+//! What `play` and `add` were asked for: a Spotify link, the account's
+//! Liked Songs, a YouTube link or search, or a file or folder.
 
 use std::path::{Path, PathBuf};
 
@@ -7,7 +7,8 @@ use anyhow::{Result, bail};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Target {
-    /// A canonical `spotify:{kind}:{id}` URI.
+    /// A canonical `spotify:{kind}:{id}` URI, or `spotify:collection` for
+    /// the signed-in account's Liked Songs.
     Spotify { kind: SpotifyKind, uri: String },
     /// A video URL, or `ytsearch1:{query}` for yt-dlp.
     Youtube(String),
@@ -20,6 +21,7 @@ pub enum SpotifyKind {
     Track,
     Album,
     Playlist,
+    Liked,
 }
 
 impl SpotifyKind {
@@ -51,7 +53,14 @@ pub fn parse(input: &str) -> Result<Target> {
         }
         return Ok(Target::Youtube(format!("ytsearch1:{query}")));
     }
+    // The CLI sends a file called `liked` as an absolute path.
+    if input.eq_ignore_ascii_case("liked") {
+        return Ok(liked());
+    }
     if let Some(rest) = input.strip_prefix("spotify:") {
+        if rest == "collection" || rest.strip_prefix("user:").is_some_and(|r| r.ends_with(":collection") && r.matches(':').count() == 1) {
+            return Ok(liked());
+        }
         let mut parts = rest.split(':');
         // spotify:user:{name}:playlist:{id} is the old playlist form.
         let (kind, id) = match (parts.next(), parts.next(), parts.next(), parts.next()) {
@@ -69,6 +78,9 @@ pub fn parse(input: &str) -> Result<Target> {
             kind = segments.next().unwrap_or_default();
         }
         let id = segments.next().unwrap_or_default();
+        if (kind, id) == ("collection", "tracks") {
+            return Ok(liked());
+        }
         return spotify(kind, id, input);
     }
     if web_path(input, &["youtube.com", "www.youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"]).is_some() {
@@ -97,6 +109,10 @@ pub fn from_dir(input: &str, from: &Path) -> String {
         return from.join(path).to_string_lossy().into_owned();
     }
     input.to_string()
+}
+
+fn liked() -> Target {
+    Target::Spotify { kind: SpotifyKind::Liked, uri: "spotify:collection".into() }
 }
 
 fn spotify(kind: &str, id: &str, input: &str) -> Result<Target> {
@@ -166,6 +182,15 @@ mod tests {
             parse(&format!("https://open.spotify.com/album/{ID}")).unwrap(),
             Target::Spotify { kind: SpotifyKind::Album, uri: format!("spotify:album:{ID}") }
         );
+    }
+
+    #[test]
+    fn liked_songs_by_name_uri_or_link() {
+        for input in ["liked", "Liked", "spotify:collection", "spotify:user:12572401:collection", "https://open.spotify.com/collection/tracks"] {
+            assert_eq!(parse(input).unwrap(), liked(), "{input}");
+        }
+        assert!(parse("spotify:user:a:b:collection").is_err());
+        assert!(parse("https://open.spotify.com/collection/albums").is_err());
     }
 
     #[test]

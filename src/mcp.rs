@@ -35,8 +35,9 @@ pub fn run(paths: Paths) -> Result<()> {
 
 #[derive(Deserialize, JsonSchema)]
 struct Target {
-    /// A Spotify track, album or playlist link or `spotify:` URI, a YouTube link, `yt:` followed by a
-    /// search for its first result, or the absolute path of an audio file or a folder of them.
+    /// A Spotify track, album or playlist link or `spotify:` URI, `liked` for the Spotify Liked Songs,
+    /// a YouTube link, `yt:` followed by a search for its first result, or the absolute path of an audio
+    /// file or a folder of them.
     target: String,
 }
 

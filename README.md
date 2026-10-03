@@ -76,6 +76,7 @@ agentamp login                     # once, for Spotify
 agentamp play https://open.spotify.com/album/…
 agentamp play ~/Music/Album        # a folder, a file, or a link
 agentamp play yt: plastic love     # the first YouTube result
+agentamp play liked                # your Spotify Liked Songs
 agentamp add --next song.flac      # after the current track
 agentamp now                       # ▶ Title · Artist  1:23 / 4:29
 agentamp --json now                # the same, for scripts and agents
@@ -100,7 +101,9 @@ Spotify needs a Premium account. `agentamp login` opens Spotify's sign-in
 page in the browser and keeps librespot's reusable credential in
 `~/.config/agentamp/credentials.json`, in a directory only your user can
 read; `agentamp logout` deletes it. Track, album and playlist links and
-`spotify:` URIs play. Spotify audio is never saved as music files: librespot
+`spotify:` URIs play, and `liked` plays your Liked Songs. Details for the
+first 200 songs of an album or playlist are read ahead; the rest show as
+URIs until they play. Spotify audio is never saved as music files: librespot
 keeps up to 2 GiB of it in its own encrypted cache
 (`~/.cache/agentamp/spotify-audio/`), so songs heard again are not
 downloaded again.
