@@ -16,10 +16,12 @@ use serde::{Deserialize, Serialize};
 use crate::ipc::Request;
 use crate::model::{Status, Track, plain_integers};
 use crate::paths::Paths;
+use crate::youtube::Found;
 
 const INSTRUCTIONS: &str = "AgentAmp plays Spotify (Premium, after `agentamp login`), YouTube and local files \
 through a background player that keeps going between calls. `play` replaces the queue, `add` extends it, \
-`now_playing` and `queue` say what is on without changing it.";
+`now_playing` and `queue` say what is on without changing it. `search_youtube` lists videos to choose \
+from; pass a result's `target` to `play` or `add`.";
 
 pub fn run(paths: Paths) -> Result<()> {
     tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
@@ -58,6 +60,27 @@ struct Volume {
 struct Seek {
     /// Seconds from the start of the track.
     seconds: u32,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(transform = plain_integers)]
+struct Search {
+    /// What to look for, as you would type it into YouTube.
+    query: String,
+    /// How many results, 1 to 20.
+    #[serde(default = "five")]
+    #[schemars(range(min = 1, max = 20))]
+    count: u8,
+}
+
+fn five() -> u8 {
+    5
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+struct Results {
+    /// In YouTube's order, best match first.
+    results: Vec<Found>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -160,6 +183,19 @@ impl Player {
     #[tool(annotations(title = "Seek", destructive_hint = false, idempotent_hint = true, open_world_hint = false))]
     async fn seek(&self, Parameters(Seek { seconds }): Parameters<Seek>) -> Result<Json<Status>, String> {
         self.ask(Request::Seek { position_ms: seconds.saturating_mul(1000) }).await
+    }
+
+    /// Search YouTube for videos to play, without downloading or playing any. Live streams are left out.
+    #[tool(annotations(title = "Search YouTube", read_only_hint = true, open_world_hint = true))]
+    async fn search_youtube(&self, Parameters(Search { query, count }): Parameters<Search>) -> Result<Json<Results>, String> {
+        if query.trim().is_empty() {
+            return Err("say what to search for".into());
+        }
+        if !(1..=20).contains(&count) {
+            return Err(format!("a search lists 1 to 20 results, not {count}"));
+        }
+        let results = crate::youtube::search(query.trim(), count).await.map_err(|e| format!("{e:#}"))?;
+        Ok(Json(Results { results }))
     }
 
     /// What is playing, where in it, and the volume. Never starts the player.

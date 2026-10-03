@@ -6,15 +6,18 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use tokio::process::Command;
 
-use crate::model::{Source, Track};
+use crate::model::{Source, Track, plain_integers};
 
 /// symphonia decodes AAC in MP4 but not Opus, so only m4a audio will do.
 const FORMAT: &str = "bestaudio[ext=m4a]";
 const TIMEOUT: Duration = Duration::from_secs(120);
 const RETRY_AFTER: Duration = Duration::from_secs(1);
+/// A search reads one page of results and downloads nothing.
+const SEARCH_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Deserialize)]
 struct Info {
@@ -55,14 +58,69 @@ pub async fn fetch(url: &str, dir: &Path) -> Result<Track> {
 }
 
 async fn download(url: &str, dir: &Path) -> Result<std::process::Output> {
-    let output = Command::new(program())
+    let mut command = Command::new(program());
+    command
         .args(["--no-playlist", "--no-progress", "-f", FORMAT, "-o"])
         .arg(dir.join("%(id)s.%(ext)s"))
-        .args(["--print", "after_move:%(.{id,title,uploader,duration,filepath,webpage_url})j", "--", url])
-        .kill_on_drop(true)
-        .output();
-    match tokio::time::timeout(TIMEOUT, output).await {
-        Err(_) => bail!("yt-dlp took longer than {} seconds", TIMEOUT.as_secs()),
+        .args(["--print", "after_move:%(.{id,title,uploader,duration,filepath,webpage_url})j", "--", url]);
+    run(command, TIMEOUT).await
+}
+
+/// A video a search found, not yet downloaded.
+#[derive(Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[schemars(transform = plain_integers)]
+pub struct Found {
+    pub title: String,
+    /// The channel that posted it.
+    pub artist: String,
+    /// 0 when YouTube does not say.
+    pub duration_ms: u32,
+    /// The video's link, for `play` or `add`.
+    pub target: String,
+}
+
+/// The first `count` videos YouTube finds for `query`. Live streams are left
+/// out: they never end, so there is no file to download and play.
+pub async fn search(query: &str, count: u8) -> Result<Vec<Found>> {
+    let mut command = Command::new(program());
+    command.args(["--flat-playlist", "--dump-json", "--no-warnings", "--"]).arg(format!("ytsearch{count}:{query}"));
+    let output = run(command, SEARCH_TIMEOUT).await?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let reason = stderr.lines().rev().find(|l| l.contains("ERROR")).unwrap_or(stderr.trim());
+        bail!("yt-dlp could not search for {query}: {reason}");
+    }
+    Ok(String::from_utf8_lossy(&output.stdout).lines().filter_map(found).collect())
+}
+
+#[derive(Deserialize)]
+struct Entry {
+    id: String,
+    title: Option<String>,
+    uploader: Option<String>,
+    channel: Option<String>,
+    duration: Option<f64>,
+    url: Option<String>,
+    live_status: Option<String>,
+}
+
+fn found(line: &str) -> Option<Found> {
+    let entry: Entry = serde_json::from_str(line).ok()?;
+    if matches!(entry.live_status.as_deref(), Some("is_live" | "is_upcoming")) {
+        return None;
+    }
+    Some(Found {
+        title: entry.title?,
+        artist: entry.uploader.or(entry.channel).unwrap_or_default(),
+        duration_ms: entry.duration.map_or(0, |d| (d * 1000.0) as u32),
+        target: entry.url.unwrap_or_else(|| format!("https://www.youtube.com/watch?v={}", entry.id)),
+    })
+}
+
+async fn run(mut command: Command, timeout: Duration) -> Result<std::process::Output> {
+    let output = command.kill_on_drop(true).output();
+    match tokio::time::timeout(timeout, output).await {
+        Err(_) => bail!("yt-dlp took longer than {} seconds", timeout.as_secs()),
         Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
             bail!("YouTube needs yt-dlp; install it (pacman -S yt-dlp, brew install yt-dlp)")
         }
@@ -98,6 +156,26 @@ mod tests {
         assert_eq!(track.duration_ms, 309_500);
         assert_eq!(track.link.as_deref(), Some("https://www.youtube.com/watch?v=T_lC2O1oIew"));
         assert_eq!(track.art.as_deref(), Some("https://i.ytimg.com/vi/T_lC2O1oIew/hqdefault.jpg"));
+    }
+
+    #[test]
+    fn searches_list_videos_and_leave_out_live_streams() {
+        let video = r#"{"_type": "url", "id": "T_lC2O1oIew", "title": "Plastic Love", "uploader": "Mariya Takeuchi", "channel": "Mariya Takeuchi", "duration": 309, "url": "https://www.youtube.com/watch?v=T_lC2O1oIew", "live_status": null}"#;
+        assert_eq!(
+            found(video),
+            Some(Found {
+                title: "Plastic Love".into(),
+                artist: "Mariya Takeuchi".into(),
+                duration_ms: 309_000,
+                target: "https://www.youtube.com/watch?v=T_lC2O1oIew".into(),
+            })
+        );
+        let bare = found(r#"{"id": "abc", "title": "Mix", "channel": "Night Tempo"}"#).unwrap();
+        assert_eq!((bare.artist.as_str(), bare.duration_ms), ("Night Tempo", 0));
+        assert_eq!(bare.target, "https://www.youtube.com/watch?v=abc");
+        assert_eq!(found(r#"{"id": "radio", "title": "24/7 radio", "live_status": "is_live"}"#), None);
+        assert_eq!(found(r#"{"id": "soon", "title": "Premiere", "live_status": "is_upcoming"}"#), None);
+        assert_eq!(found("not json"), None);
     }
 
     #[test]

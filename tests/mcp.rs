@@ -26,6 +26,8 @@ impl Server {
             .arg("mcp")
             .env("AGENTAMP_HOME", &home)
             .env("AGENTAMP_AUDIO", "null")
+            // Absent unless a test writes a fake one there.
+            .env("AGENTAMP_YTDLP", home.join("yt-dlp"))
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -135,8 +137,8 @@ fn clients_with_the_handshake_get_every_tool() {
     assert_eq!(
         names,
         [
-            "add", "clear_queue", "next", "now_playing", "pause", "play", "previous", "queue", "resume", "seek",
-            "set_volume", "stop"
+            "add", "clear_queue", "next", "now_playing", "pause", "play", "previous", "queue", "resume",
+            "search_youtube", "seek", "set_volume", "stop"
         ]
     );
     for tool in &tools {
@@ -152,6 +154,8 @@ fn clients_with_the_handshake_get_every_tool() {
     assert!(!json!(tools).to_string().contains(r#""format":"uint"#), "{tools:?}");
     let tool = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap();
     assert_eq!(tool("now_playing")["annotations"]["readOnlyHint"], true);
+    assert_eq!(tool("search_youtube")["annotations"]["readOnlyHint"], true);
+    assert_eq!(tool("search_youtube")["inputSchema"]["required"], json!(["query"]));
     assert_eq!(tool("play")["annotations"]["destructiveHint"], true);
     assert_eq!(tool("play")["inputSchema"]["required"], json!(["target"]));
     assert_eq!(tool("set_volume")["inputSchema"]["properties"]["percent"]["maximum"], 100);
@@ -205,4 +209,56 @@ fn clients_without_the_handshake_play_and_control() {
     // An unknown tool is a protocol error.
     let unknown = server.request("tools/call", json!({"name": "dance", "arguments": {}, "_meta": meta()}));
     assert_eq!(unknown["error"]["code"], -32602, "{unknown}");
+}
+
+#[test]
+fn agents_search_youtube_without_downloading() {
+    let mut server = Server::start("mcp_search");
+    let script = server.home.join("yt-dlp");
+    std::fs::write(
+        &script,
+        format!(
+            r#"#!/bin/sh
+echo "$@" >> "{log}"
+for last; do :; done
+case "$last" in *broken*) echo "ERROR: Unable to download API page: HTTP Error 429" >&2; exit 1;; *nothing*) exit 0;; esac
+echo '{{"id": "T_lC2O1oIew", "title": "Plastic Love", "uploader": "Mariya Takeuchi", "duration": 309, "url": "https://www.youtube.com/watch?v=T_lC2O1oIew", "live_status": null}}'
+echo '{{"id": "radio", "title": "City pop radio 24/7", "uploader": "Lofi Girl", "live_status": "is_live"}}'
+echo '{{"id": "ls2JK6x6ycs", "title": "Plastic Love 1984", "channel": "SOULCITYWALK", "duration": 477}}'
+"#,
+            log = server.home.join("yt-dlp.log").display()
+        ),
+    )
+    .unwrap();
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    let answer = server.call("search_youtube", json!({"query": "  plastic love "}));
+    assert_eq!(answer["isError"], false, "{answer}");
+    let results = answer["structuredContent"]["results"].as_array().unwrap();
+    let titles: Vec<&str> = results.iter().map(|r| r["title"].as_str().unwrap()).collect();
+    assert_eq!(titles, ["Plastic Love", "Plastic Love 1984"], "the live stream is left out");
+    assert_eq!(results[0]["artist"], "Mariya Takeuchi");
+    assert_eq!(results[0]["duration_ms"], 309_000);
+    assert_eq!(results[1]["target"], "https://www.youtube.com/watch?v=ls2JK6x6ycs");
+    let calls = std::fs::read_to_string(server.home.join("yt-dlp.log")).unwrap();
+    assert!(calls.contains("--flat-playlist") && !calls.contains(" -f "), "lists, downloads nothing: {calls}");
+    assert!(calls.trim_end().ends_with("-- ytsearch5:plastic love"), "{calls}");
+    assert!(!server.home.join("run/agentamp.sock").exists(), "searching does not start the player");
+
+    let three = server.call("search_youtube", json!({"query": "plastic love", "count": 3}));
+    assert_eq!(three["isError"], false, "{three}");
+    assert!(std::fs::read_to_string(server.home.join("yt-dlp.log")).unwrap().contains("ytsearch3:plastic love"));
+    let none = server.call("search_youtube", json!({"query": "nothing at all"}));
+    assert_eq!(none["structuredContent"]["results"], json!([]));
+
+    for (arguments, says) in [
+        (json!({"query": " "}), "what to search for"),
+        (json!({"query": "x", "count": 50}), "1 to 20"),
+        (json!({"query": "broken"}), "HTTP Error 429"),
+    ] {
+        let answer = server.call("search_youtube", arguments);
+        assert_eq!(answer["isError"], true, "{answer}");
+        assert!(answer["content"][0]["text"].as_str().unwrap().contains(says), "{answer}");
+    }
 }

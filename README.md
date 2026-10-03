@@ -123,8 +123,11 @@ tools are the CLI's controls: `play`, `add`, `pause`, `resume`, `next`,
 `previous`, `stop`, `clear_queue`, `set_volume`, `seek`, `now_playing` and
 `queue`. Each answers with the player's state as structured JSON, and a
 refusal (a missing file, Spotify without a sign-in) as a tool error the
-agent can read. Like the CLI it starts the background player when needed;
-`now_playing` and `queue` never do. It runs no network listener of its own.
+agent can read. `search_youtube` lists up to 20 videos for a query, with
+their title, channel, length and a link to pass to `play` or `add`; it
+downloads nothing and leaves out live streams. Like the CLI it starts the
+background player when needed; `now_playing`, `queue` and `search_youtube`
+never do. It runs no network listener of its own.
 
 ```sh
 claude mcp add agentamp -- agentamp mcp     # Claude Code
