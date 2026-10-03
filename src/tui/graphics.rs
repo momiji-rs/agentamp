@@ -9,6 +9,7 @@ use ratatui::Frame;
 use ratatui::layout::Rect;
 use ratatui::style::Style;
 use ratatui::widgets::{Block, Clear};
+use ratatui_image::picker::cap_parser::QueryStdioOptions;
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::Protocol;
 use ratatui_image::{FilterType, FontSize, Image, Resize};
@@ -17,6 +18,11 @@ use super::view::{self, View};
 
 /// Covers kept at full size: the playing track's and a few before it.
 const KEEP: usize = 8;
+/// How long the image query may wait for a terminal that never answers.
+/// Every terminal answers its last question, so this bounds only the rare
+/// silent one, which otherwise holds the first frame for the library's 2 s;
+/// a query over SSH still has one round trip of a long link to spare.
+const QUERY_TIMEOUT_MS: i32 = 500;
 
 pub struct Graphics {
     picker: Picker,
@@ -33,7 +39,7 @@ impl Graphics {
         if std::env::var("AGENTAMP_COVERS").as_deref() == Ok("blocks") {
             return None;
         }
-        Self::with(Picker::from_query_stdio().ok()?)
+        Self::with(Picker::from_query_stdio_with_options(query()).ok()?)
     }
 
     pub fn with(picker: Picker) -> Option<Self> {
@@ -78,6 +84,11 @@ impl Graphics {
             frame.render_widget(Image::new(protocol), area);
         }
     }
+}
+
+/// What the image query asks.
+fn query() -> QueryStdioOptions {
+    QueryStdioOptions { timeout_ms: QUERY_TIMEOUT_MS, ..QueryStdioOptions::default() }
 }
 
 /// The cells a square picture covers at its largest in `area`, so the
@@ -126,6 +137,13 @@ mod tests {
             })
             .unwrap();
         terminal.backend().buffer().content().iter().map(|c| c.symbol()).collect()
+    }
+
+    #[test]
+    fn the_image_query_bounds_its_wait() {
+        let options = query();
+        assert_eq!(options.timeout_ms, QUERY_TIMEOUT_MS);
+        assert!(options.timeout_ms < QueryStdioOptions::default().timeout_ms);
     }
 
     #[test]
