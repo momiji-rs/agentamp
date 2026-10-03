@@ -33,6 +33,13 @@ TUI changes are checked by looking: `scripts/screens.sh` renders the frames
 the tests keep in `target/screens/` with
 [termshot](https://github.com/momiji-rs/termshot).
 
+`cargo run --features dev` builds developer mode: F12 or `` ` `` opens an
+overlay that switches the spectrum's choices while the music plays (its
+scale, fall, peaks, analysis, bar width, frame rate and delay), shows the
+frame rate, the time a frame takes and, on Linux, the CPU the window and
+its terminal use, and `y` writes the choices to `tuning.txt` next to the
+log. Release builds leave all of it out.
+
 Start-up timing, the cost while playing, and what is left to gain:
 [docs/performance.md](docs/performance.md).
 

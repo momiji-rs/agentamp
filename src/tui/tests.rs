@@ -375,7 +375,9 @@ fn the_spectrum_fills_the_foot_of_now_playing() {
     let mut view = demo();
     let area = Rect::new(0, 0, 140, 40);
     // 32 columns inside the panel: bars two wide, one apart.
-    assert_eq!(view::spectrum_bars(area, &view, &spectrum::Tuning::DEFAULT), 11);
+    assert_eq!(view::spectrum_bars(area, &view), 11);
+    // One cell wide and one apart, 16 fit.
+    assert_eq!(view::spectrum_bars(area, &View { tuning: spectrum::Tuning { width: 1, ..view.tuning }, ..view.clone() }), 16);
     let mut levels = vec![0.0; 11];
     levels[0] = 1.0;
     levels[1] = 0.5;
@@ -394,9 +396,9 @@ fn the_spectrum_fills_the_foot_of_now_playing() {
     assert_eq!(column(25), "     ", "the row above is the details'");
     assert!(screen.contains("Stay With Me"));
     // A narrow window has no panel, so the bars only feed the mark.
-    assert_eq!(view::spectrum_bars(Rect::new(0, 0, 100, 40), &view, &spectrum::Tuning::DEFAULT), 12);
+    assert_eq!(view::spectrum_bars(Rect::new(0, 0, 100, 40), &view), 12);
     view.status.track = None;
-    assert_eq!(view::spectrum_bars(area, &view, &spectrum::Tuning::DEFAULT), 0);
+    assert_eq!(view::spectrum_bars(area, &view), 0);
 }
 
 #[test]

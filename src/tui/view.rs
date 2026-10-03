@@ -80,6 +80,8 @@ pub struct View {
     pub since_ms: u32,
     /// The bars of the sound as it plays, from the window's analyser.
     pub spectrum: Spectrum,
+    /// What shapes them. Only developer mode changes it.
+    pub tuning: Tuning,
 }
 
 impl Default for View {
@@ -102,6 +104,7 @@ impl Default for View {
             covers: HashMap::new(),
             since_ms: 0,
             spectrum: Spectrum::default(),
+            tuning: Tuning::DEFAULT,
         }
     }
 }
@@ -139,9 +142,9 @@ fn regions(area: Rect) -> (std::rc::Rc<[Rect]>, Rect, Rect) {
 /// How many bars the analyser should make for a window of `area`: the
 /// spectrum's in the Now playing panel, or enough for the playing row's
 /// mark when the panel is not shown.
-pub fn spectrum_bars(area: Rect, view: &View, tuning: &Tuning) -> usize {
+pub fn spectrum_bars(area: Rect, view: &View) -> usize {
     match spectrum_area(area, view) {
-        Some(rect) => tuning.bars(rect.width),
+        Some(rect) => view.tuning.bars(rect.width),
         None if view.status.track.is_some() => MARK_BARS,
         None => 0,
     }
@@ -397,7 +400,7 @@ fn now_playing(frame: &mut Frame, area: Rect, view: &View) {
     let text = spectrum.map_or(details, |rect| Rect { height: rect.y.saturating_sub(details.y + 1), ..details });
     frame.render_widget(Paragraph::new(lines).wrap(ratatui::widgets::Wrap { trim: true }), text);
     if let Some(rect) = spectrum {
-        bars(rect, frame.buffer_mut(), &view.spectrum, &Tuning::DEFAULT);
+        bars(rect, frame.buffer_mut(), &view.spectrum, &view.tuning);
     }
 }
 

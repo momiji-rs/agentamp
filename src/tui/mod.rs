@@ -4,6 +4,8 @@
 mod ansi;
 mod art;
 mod cover;
+#[cfg(feature = "dev")]
+mod dev;
 mod graphics;
 mod icons;
 mod spectrum;
@@ -68,6 +70,8 @@ pub fn run(paths: Paths) -> Result<()> {
     let (covers, wanted) = mpsc::channel();
     let dir = paths.art();
     let (art_wakes, input_wakes) = (wakes.clone(), wakes.clone());
+    #[cfg(feature = "dev")]
+    let dev = dev::Dev::new(paths.log().with_file_name("tuning.txt"));
     let sound = Arc::new(Mutex::new(spectrum::Heard::default()));
     {
         let (paths, sound) = (paths.clone(), sound.clone());
@@ -87,7 +91,16 @@ pub fn run(paths: Paths) -> Result<()> {
         std::thread::Builder::new().name("hang-up".into()).spawn(move || watch_hang_up(wakes))?;
     }
     std::thread::Builder::new().name("input".into()).spawn(move || read_input(input_wakes))?;
-    let result = event_loop(&mut terminal, &mut graphics, &jobs, &covers, &received, &sound);
+    let result = event_loop(
+        &mut terminal,
+        &mut graphics,
+        &jobs,
+        &covers,
+        &received,
+        &sound,
+        #[cfg(feature = "dev")]
+        dev,
+    );
     // A closed terminal has nothing to restore or show the cursor in, and
     // the complaint about it would go to a closed stderr, which aborts.
     if matches!(result, Ok(Exit::Closed)) {
@@ -112,6 +125,7 @@ fn event_loop(
     covers: &mpsc::Sender<String>,
     wakes: &mpsc::Receiver<Wake>,
     sound: &Mutex<spectrum::Heard>,
+    #[cfg(feature = "dev")] mut dev: dev::Dev,
 ) -> Result<Exit> {
     let mut view = View { icons: icons::from_env(), ..View::default() };
     let mut dirty = true;
@@ -122,7 +136,6 @@ fn event_loop(
     let mut heard = false;
     // When the status was read: the clock runs on from it while playing.
     let mut read_at = opened;
-    let tuning = spectrum::Tuning::DEFAULT;
     let mut analyser = spectrum::Analyser::default();
     let mut wave = vec![0.0; crate::tap::KEPT];
     // When the bars last moved, and when they move next.
@@ -137,8 +150,9 @@ fn event_loop(
         let now = Instant::now();
         let animating = view.status.state == State::Playing || !analyser.settled();
         if animating && now >= next_frame && !waiting {
+            let tuning = view.tuning;
             let size = terminal.size()?;
-            let count = view::spectrum_bars(Rect::new(0, 0, size.width, size.height), &view, &tuning);
+            let count = view::spectrum_bars(Rect::new(0, 0, size.width, size.height), &view);
             let (rate, sounding) = {
                 let sound = sound.lock().expect("sound");
                 let delay = Duration::from_millis(u64::from(tuning.delay_ms));
@@ -153,7 +167,7 @@ fn event_loop(
             analyser.step(&wave, rate, count, &tuning, dt, playing && sounding);
             view.spectrum = analyser.spectrum();
             stepped = now;
-            next_frame = (next_frame + tuning.period()).max(now);
+            next_frame = (next_frame + view.tuning.period()).max(now);
             dirty = true;
         }
         if dirty && !waiting {
@@ -165,8 +179,13 @@ fn event_loop(
                 if let Some(graphics) = graphics.as_mut() {
                     graphics.draw(frame, &view);
                 }
+                #[cfg(feature = "dev")]
+                dev.draw(frame, &view.tuning, analyser.sens);
             })?;
             ratatui::crossterm::execute!(terminal.backend_mut(), EndSynchronizedUpdate)?;
+            // From before the bars moved, so the analysis counts too.
+            #[cfg(feature = "dev")]
+            dev.frame(Instant::now(), now.elapsed());
             dirty = false;
             frames += 1;
             if crate::trace::enabled() {
@@ -230,6 +249,11 @@ fn event_loop(
                     view.since_ms = read_at.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
                     view.settle_clock();
                     read_at = std::time::Instant::now();
+                    #[cfg(feature = "dev")]
+                    if dev.key(key, &mut view.tuning) {
+                        dirty = true;
+                        continue;
+                    }
                     match view.key(key) {
                         Some(Command::Quit) => return Ok(Exit::Quit),
                         Some(Command::Send(request)) => jobs.send(request)?,
