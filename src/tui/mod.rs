@@ -173,7 +173,10 @@ fn event_loop(
                     }
                     dirty = true;
                 }
-                Wake::Input(Event::Resize(..)) => dirty = true,
+                Wake::Input(Event::Resize(cols, rows)) => {
+                    crate::trace::mark(format!("resize {cols}x{rows}"));
+                    dirty = true;
+                }
                 Wake::Input(_) => {}
                 Wake::Closed => return Ok(Exit::Closed),
             }
