@@ -5,6 +5,7 @@ mod ipc;
 mod library;
 mod mcp;
 mod model;
+mod pathfinder;
 mod paths;
 mod queue;
 mod resolve;
@@ -62,7 +63,7 @@ enum Cmd {
     Stop,
     /// Empty the queue after the current track.
     Clear,
-    /// Search Spotify for tracks, albums and playlists to play.
+    /// Search Spotify for tracks, albums, playlists and artists to play.
     Search {
         query: Vec<String>,
         /// How many of each kind, 1 to 10.
@@ -278,7 +279,8 @@ fn describe(request: &Request, data: &Value) -> Option<String> {
 /// Search results by kind, each line ending with the target to play.
 fn found(found: &spotify_search::Found) -> String {
     let mut lines = Vec::new();
-    for (kind, hits) in [("Tracks", &found.tracks), ("Albums", &found.albums), ("Playlists", &found.playlists)] {
+    let kinds = [("Tracks", &found.tracks), ("Albums", &found.albums), ("Playlists", &found.playlists), ("Artists", &found.artists)];
+    for (kind, hits) in kinds {
         if hits.is_empty() {
             continue;
         }

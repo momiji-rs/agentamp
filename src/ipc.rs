@@ -33,7 +33,7 @@ pub enum Request {
     Queue,
     Volume { percent: u8 },
     Seek { position_ms: u32 },
-    /// Search Spotify for up to `count` tracks, albums and playlists.
+    /// Search Spotify for up to `count` tracks, albums, playlists and artists.
     SearchSpotify { query: String, count: u8 },
     Shutdown,
     /// Stream the sound as it plays, for drawing it: after the answer the

@@ -39,6 +39,12 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 # librespot's HTTP client fetches covers; these are its request types.
 http = "1"
 bytes = "1"
+# Reading Spotify's web player code for its current query hashes, as a
+# desktop browser: librespot's client sends its own user agent, which gets
+# the mobile web player. The same client and TLS librespot is built on.
+hyper-util = { version = "0.1", default-features = false, features = ["client-legacy", "http1", "tokio"] }
+hyper-rustls = { version = "0.27", default-features = false, features = ["http1", "native-tokio", "ring"] }
+http-body-util = "0.1"
 # Real covers in terminals with kitty graphics, Sixel or iTerm2 images;
 # elsewhere the window draws its own half blocks. Without chafa or the
 # image crate's other formats.

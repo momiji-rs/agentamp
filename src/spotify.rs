@@ -25,6 +25,7 @@ use tokio::sync::Mutex;
 use crate::deck::{Deck, OnEnd, Output, gain};
 use crate::model::{Source, Track};
 use crate::paths::Paths;
+use crate::pathfinder::Pathfinder;
 use crate::tap::Tap;
 use crate::target::SpotifyKind;
 
@@ -95,11 +96,19 @@ async fn context(session: &Session, uri: &str) -> Result<Vec<String>> {
 pub struct Spotify {
     paths: Paths,
     session: Mutex<Option<Session>>,
+    web: Pathfinder,
 }
 
 impl Spotify {
     pub fn new(paths: Paths) -> Arc<Self> {
-        Arc::new(Self { paths, session: Mutex::new(None) })
+        let web = Pathfinder::new(paths.web_queries());
+        Arc::new(Self { paths, session: Mutex::new(None), web })
+    }
+
+    /// The `data` of one of the web player's queries.
+    pub async fn query(&self, op: &str, variables: serde_json::Value) -> Result<serde_json::Value> {
+        let session = self.session().await?;
+        self.web.query(&session, op, variables).await
     }
 
     pub async fn session(&self) -> Result<Session> {

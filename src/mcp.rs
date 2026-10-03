@@ -20,8 +20,8 @@ use crate::youtube::Found;
 
 const INSTRUCTIONS: &str = "AgentAmp plays Spotify (Premium, after `agentamp login`), YouTube and local files \
 through a background player that keeps going between calls. `play` replaces the queue, `add` extends it, \
-`now_playing` and `queue` say what is on without changing it. `search_spotify` lists tracks, albums and \
-playlists, `search_youtube` lists videos; pass a result's `target` to `play` or `add`. \
+`now_playing` and `queue` say what is on without changing it. `search_spotify` lists tracks, albums, \
+playlists and artists, `search_youtube` lists videos; pass a result's `target` to `play` or `add`. \
 A YouTube track answers at once with `downloading: true` and plays when its file is here; one that fails \
 leaves the queue and `now_playing` gives the error.";
 
@@ -199,7 +199,7 @@ impl Player {
         self.ask(Request::Seek { position_ms: seconds.saturating_mul(1000) }).await
     }
 
-    /// Search Spotify for tracks, albums and playlists to play, without playing any. Needs the Spotify
+    /// Search Spotify for tracks, albums, playlists and artists to play, without playing any. Needs the Spotify
     /// sign-in, and starts the background player, which holds it.
     #[tool(annotations(title = "Search Spotify", read_only_hint = true, open_world_hint = true))]
     async fn search_spotify(

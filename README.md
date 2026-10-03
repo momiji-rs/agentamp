@@ -77,7 +77,7 @@ agentamp play https://open.spotify.com/album/…
 agentamp play ~/Music/Album        # a folder, a file, or a link
 agentamp play yt: plastic love     # the first YouTube result
 agentamp play liked                # your Spotify Liked Songs
-agentamp search plastic love       # Spotify tracks, albums, playlists
+agentamp search plastic love       # Spotify tracks, albums, playlists, artists
 agentamp add --next song.flac      # after the current track
 agentamp now                       # ▶ Title · Artist  1:23 / 4:29
 agentamp --json now                # the same, for scripts and agents
@@ -105,11 +105,20 @@ read; `agentamp logout` deletes it. Track, album, playlist and artist
 links and `spotify:` URIs play, an artist as Spotify plays them (their
 popular songs, then more of their releases), and `liked` plays your Liked
 Songs. Details for the first 200 songs of an album or playlist are read
-ahead; the rest show as URIs until they play. `search` lists Spotify's tracks, albums and playlists
-for a query (5 of each, `--count` up to 10), each with the URI to play. It
-asks with the same sign-in, the way Spotify's web player searches, as the
-Web API's search turns librespot's client away; should that query stop
-working, it falls back to tracks only. Spotify audio is never saved as
+ahead; the rest show as URIs until they play.
+
+`search` lists Spotify's tracks, albums, playlists and artists for a query
+(5 of each, `--count` up to 10), each with the URI to play. It asks with
+the same sign-in, the way Spotify's web player does, as the Web API's
+search turns librespot's client away. The web player's queries are no
+public API: each is known by a hash in the web player's code, which
+changes with that code. When Spotify refuses a hash, AgentAmp reads the
+current code from `open.spotify.com` and `open.spotifycdn.com`, at most
+once an hour, and keeps the hashes it finds in
+`~/.cache/agentamp/web-player-queries.json`. Should the search still fail,
+it falls back to tracks only.
+
+Spotify audio is never saved as
 music files: librespot keeps up to 2 GiB of it in its own encrypted cache
 (`~/.cache/agentamp/spotify-audio/`), so songs heard again are not
 downloaded again.

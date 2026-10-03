@@ -2,10 +2,9 @@
 //! search: no registered Web API app. The Web API's search answers 429 for
 //! librespot's client id, and a registered app could no longer stream.
 //!
-//! First Spotify's web player query (pathfinder `searchDesktop`), which
-//! finds tracks, albums and playlists. It is not a public API, and its
-//! query hash changes when the web player's does, so when it fails the
-//! session's search context still finds tracks.
+//! First Spotify's web player query (`searchDesktop`), which finds tracks,
+//! albums, playlists and artists. It is not a public API, so when it fails
+//! the session's search context still finds tracks.
 
 use std::sync::Arc;
 use std::time::Duration;
@@ -20,9 +19,6 @@ use serde_json::{Value, json};
 use crate::model::plain_integers;
 use crate::spotify::Spotify;
 
-const PATHFINDER: &str = "https://api-partner.spotify.com/pathfinder/v2/query";
-/// The web player's persisted `searchDesktop` query, verified 2026-10-03.
-const SEARCH_DESKTOP: &str = "d9f785900f0710b31c07818d617f4f7600c1e21217e80f5b043d1e78d74e6026";
 const TIMEOUT: Duration = Duration::from_secs(15);
 /// The most of each kind one search lists.
 pub const MOST: u8 = 10;
@@ -33,13 +29,16 @@ pub struct Found {
     pub tracks: Vec<Hit>,
     pub albums: Vec<Hit>,
     pub playlists: Vec<Hit>,
+    pub artists: Vec<Hit>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[schemars(transform = plain_integers)]
 pub struct Hit {
+    /// The track's, album's or playlist's name, or the artist's.
     pub title: String,
-    /// The artists, or who made the playlist.
+    /// The artists, or who made the playlist. None for an artist.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub artist: String,
     /// A track's album.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -54,49 +53,30 @@ pub struct Hit {
     pub target: String,
 }
 
-/// Up to `count` tracks, albums and playlists Spotify finds for `query`.
+/// Up to `count` tracks, albums, playlists and artists Spotify finds for `query`.
 pub async fn search(spotify: &Arc<Spotify>, query: &str, count: u8) -> Result<Found> {
     let count = count.clamp(1, MOST);
-    let session = spotify.session().await?;
-    match tokio::time::timeout(TIMEOUT, pathfinder(&session, query, count)).await {
-        Ok(Ok(found)) => return Ok(found),
-        Ok(Err(e)) => warn!("Spotify's web search failed, searching tracks only: {e:#}"),
-        Err(_) => warn!("Spotify's web search took too long, searching tracks only"),
+    // The web player's own variables, but for the count.
+    let variables = json!({
+        "searchTerm": query, "offset": 0, "limit": count, "numberOfTopResults": 5,
+        "includeAudiobooks": true, "includeArtistHasConcertsField": false, "includePreReleases": true,
+        "includeAlbumPreReleases": false, "includeAuthors": false, "includeEpisodeContentRatingsV2": true,
+        "isPrefix": null, "sectionFilters": ["GENERIC"],
+    });
+    match spotify.query("searchDesktop", variables).await.and_then(|data| parse(&data, count)) {
+        Ok(found) => return Ok(found),
+        Err(e) => warn!("Spotify's web search failed, searching tracks only: {e:#}"),
     }
+    let session = spotify.session().await?;
     let tracks = tokio::time::timeout(TIMEOUT, context(spotify, &session, query, count))
         .await
         .context("Spotify did not answer the search")??;
     Ok(Found { tracks, ..Found::default() })
 }
 
-async fn pathfinder(session: &Session, query: &str, count: u8) -> Result<Found> {
-    let body = json!({
-        "operationName": "searchDesktop",
-        "variables": {
-            "searchTerm": query, "offset": 0, "limit": count, "numberOfTopResults": count,
-            "includeAudiobooks": false, "includeArtistHasConcertsField": false, "includePreReleases": false,
-            "includeLocalConcertsField": false, "includeAuthors": false,
-        },
-        "extensions": {"persistedQuery": {"version": 1, "sha256Hash": SEARCH_DESKTOP}},
-    });
-    let token = session.login5().auth_token().await?;
-    let client_token = session.spclient().client_token().await?;
-    let request = http::Request::post(PATHFINDER)
-        .header("Authorization", format!("Bearer {}", token.access_token))
-        .header("client-token", client_token)
-        .header("app-platform", "WebPlayer")
-        .header("Content-Type", "application/json")
-        .body(bytes::Bytes::from(body.to_string()))?;
-    let answer = session.http_client().request_body(request).await?;
-    parse(&serde_json::from_slice(&answer).context("the search's answer is not JSON")?, count)
-}
-
 /// The web player's answer, keeping what can be played.
-fn parse(answer: &Value, count: u8) -> Result<Found> {
-    if let Some(error) = answer["errors"].as_array().and_then(|e| e.first()) {
-        bail!("{}", error["message"].as_str().unwrap_or("the search was refused"));
-    }
-    let found = &answer["data"]["searchV2"];
+fn parse(data: &Value, count: u8) -> Result<Found> {
+    let found = &data["searchV2"];
     if !found.is_object() {
         bail!("the search's answer has no results");
     }
@@ -106,46 +86,54 @@ fn parse(answer: &Value, count: u8) -> Result<Found> {
         tracks: take(items("tracksV2").iter().filter_map(|i| track(&i["item"]["data"])).collect()),
         albums: take(items("albumsV2").iter().filter_map(|i| album(&i["data"])).collect()),
         playlists: take(items("playlists").iter().filter_map(|i| playlist(&i["data"])).collect()),
+        artists: take(items("artists").iter().filter_map(|i| artist(&i["data"])).collect()),
     })
 }
 
-fn artists(data: &Value) -> String {
+pub fn artists(data: &Value) -> String {
     let names = data["artists"]["items"].as_array().into_iter().flatten();
     names.filter_map(|a| a["profile"]["name"].as_str()).collect::<Vec<_>>().join(", ")
 }
 
-fn playable(data: &Value) -> bool {
+pub fn playable(data: &Value) -> bool {
     data["playability"]["playable"].as_bool() != Some(false)
 }
 
 fn hit(data: &Value, kind: &str, artist: String) -> Option<Hit> {
     let target = data["uri"].as_str().filter(|u| u.starts_with(kind))?;
-    Some(Hit {
-        title: data["name"].as_str()?.to_string(),
-        artist,
-        album: None,
-        year: None,
-        duration_ms: None,
-        target: target.to_string(),
-    })
+    Some(Hit { title: data["name"].as_str()?.to_string(), artist, ..Hit::new(target) })
 }
 
-fn track(data: &Value) -> Option<Hit> {
+/// A track as the web player's queries give one, unless it cannot play.
+pub fn track(data: &Value) -> Option<Hit> {
     let mut hit = hit(data, "spotify:track:", artists(data)).filter(|_| playable(data))?;
     hit.album = data["albumOfTrack"]["name"].as_str().map(str::to_string);
-    hit.duration_ms = data["duration"]["totalMilliseconds"].as_u64().map(|ms| ms as u32);
+    let length = data["duration"]["totalMilliseconds"].as_u64().or(data["trackDuration"]["totalMilliseconds"].as_u64());
+    hit.duration_ms = length.map(|ms| ms as u32);
     Some(hit)
 }
 
-fn album(data: &Value) -> Option<Hit> {
+pub fn album(data: &Value) -> Option<Hit> {
     let mut hit = hit(data, "spotify:album:", artists(data)).filter(|_| playable(data))?;
-    hit.year = data["date"]["year"].as_u64().map(|y| y as u16);
+    let iso = data["date"]["isoString"].as_str().and_then(|d| d.get(..4)?.parse().ok());
+    hit.year = data["date"]["year"].as_u64().map(|y| y as u16).or(iso);
     Some(hit)
 }
 
-fn playlist(data: &Value) -> Option<Hit> {
+pub fn playlist(data: &Value) -> Option<Hit> {
     let owner = data["ownerV2"]["data"]["name"].as_str().unwrap_or_default().to_string();
     hit(data, "spotify:playlist:", owner)
+}
+
+pub fn artist(data: &Value) -> Option<Hit> {
+    let target = data["uri"].as_str().filter(|u| u.starts_with("spotify:artist:"))?;
+    Some(Hit { title: data["profile"]["name"].as_str()?.to_string(), ..Hit::new(target) })
+}
+
+impl Hit {
+    pub fn new(target: &str) -> Self {
+        Hit { title: String::new(), artist: String::new(), album: None, year: None, duration_ms: None, target: target.to_string() }
+    }
 }
 
 /// Tracks only, from the session's search context, with their details
@@ -203,7 +191,7 @@ mod tests {
 
     /// A trimmed answer of the web player's search, as it came on 2026-10-03.
     fn answer() -> Value {
-        json!({"data": {"searchV2": {
+        json!({"searchV2": {
             "tracksV2": {"totalCount": 800, "items": [
                 {"item": {"__typename": "TrackResponseWrapper", "data": {"__typename": "Track",
                     "albumOfTrack": {"name": "Expressions", "uri": "spotify:album:3lBX7AtzE4JoZaAIBLptRx"},
@@ -238,7 +226,7 @@ mod tests {
                 {"__typename": "ArtistResponseWrapper", "data": {"__typename": "Artist",
                     "profile": {"name": "Miki Matsubara"}, "uri": "spotify:artist:4hUmsYcvD8C5zuVSP93jb1"}}
             ]}
-        }}})
+        }})
     }
 
     #[test]
@@ -258,14 +246,13 @@ mod tests {
         assert_eq!(found.albums[0].target, "spotify:album:0r4h34q8ZTo1LvtXb1fIG6");
         assert_eq!(found.playlists.len(), 1);
         assert_eq!(found.playlists[0].artist, "mert.uslu13 on Instagram");
+        assert_eq!(found.artists, vec![Hit { title: "Miki Matsubara".into(), ..Hit::new("spotify:artist:4hUmsYcvD8C5zuVSP93jb1") }]);
         assert_eq!(parse(&answer(), 1).unwrap().tracks.len(), 1);
     }
 
     #[test]
-    fn a_refused_search_is_an_error() {
-        let refused = json!({"errors": [{"message": "PersistedQueryNotFound"}]});
-        assert_eq!(parse(&refused, 5).unwrap_err().to_string(), "PersistedQueryNotFound");
-        assert!(parse(&json!({"data": {}}), 5).is_err());
+    fn an_answer_without_results_is_an_error() {
+        assert!(parse(&json!({}), 5).is_err());
     }
 
     #[test]

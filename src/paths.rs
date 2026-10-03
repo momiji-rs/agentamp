@@ -53,6 +53,11 @@ impl Paths {
         self.cache.join("spotify-audio")
     }
 
+    /// The web player's query hashes, as last read from its code.
+    pub fn web_queries(&self) -> PathBuf {
+        self.cache.join("web-player-queries.json")
+    }
+
     /// Downloaded covers, named after their URL.
     pub fn art(&self) -> PathBuf {
         self.cache.join("art")
