@@ -19,7 +19,7 @@ use crate::resolve;
 use crate::spotify::Spotify;
 use crate::tap::Tap;
 
-const DEFAULT_VOLUME: u8 = 80;
+pub const DEFAULT_VOLUME: u8 = 80;
 /// How often a listening window is sent the sound since the last send.
 const LISTEN_TICK: std::time::Duration = std::time::Duration::from_millis(8);
 /// Ticks without sound between the chunks of none that check the window is there.

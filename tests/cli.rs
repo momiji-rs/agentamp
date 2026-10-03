@@ -74,6 +74,7 @@ fn wav(path: &Path, seconds: u32) {
 fn nothing_runs_until_asked() {
     let home = Home::new("nothing_runs");
     assert_eq!(home.ok(&["now"]), "■ Nothing playing");
+    assert_eq!(home.json(&["now"])["volume"], 80, "the volume the player will start at");
     assert!(!home.0.join("run/agentamp.sock").exists(), "`now` must not start the daemon");
 }
 

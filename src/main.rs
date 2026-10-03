@@ -179,7 +179,8 @@ fn send(paths: &Paths, request: &Request, autostart: bool) -> Result<Value> {
                         state: model::State::Stopped,
                         track: None,
                         position_ms: 0,
-                        volume: 0,
+                        // What the player will start at.
+                        volume: daemon::DEFAULT_VOLUME,
                         queue_len: 0,
                         error: None,
                     })?);
