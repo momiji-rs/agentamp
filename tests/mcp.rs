@@ -138,7 +138,7 @@ fn clients_with_the_handshake_get_every_tool() {
         names,
         [
             "add", "clear_queue", "next", "now_playing", "pause", "play", "previous", "queue", "resume",
-            "search_youtube", "seek", "set_volume", "stop"
+            "search_spotify", "search_youtube", "seek", "set_volume", "stop"
         ]
     );
     for tool in &tools {
@@ -155,6 +155,8 @@ fn clients_with_the_handshake_get_every_tool() {
     let tool = |name: &str| tools.iter().find(|t| t["name"] == name).unwrap();
     assert_eq!(tool("now_playing")["annotations"]["readOnlyHint"], true);
     assert_eq!(tool("search_youtube")["annotations"]["readOnlyHint"], true);
+    assert_eq!(tool("search_spotify")["annotations"]["readOnlyHint"], true);
+    assert_eq!(tool("search_spotify")["inputSchema"]["required"], json!(["query"]));
     assert_eq!(tool("search_youtube")["inputSchema"]["required"], json!(["query"]));
     assert_eq!(tool("play")["annotations"]["destructiveHint"], true);
     assert_eq!(tool("play")["inputSchema"]["required"], json!(["target"]));
@@ -258,6 +260,17 @@ echo '{{"id": "ls2JK6x6ycs", "title": "Plastic Love 1984", "channel": "SOULCITYW
         (json!({"query": "broken"}), "HTTP Error 429"),
     ] {
         let answer = server.call("search_youtube", arguments);
+        assert_eq!(answer["isError"], true, "{answer}");
+        assert!(answer["content"][0]["text"].as_str().unwrap().contains(says), "{answer}");
+    }
+
+    // Spotify's search needs the sign-in, which the player holds.
+    for (arguments, says) in [
+        (json!({"query": " "}), "what to search for"),
+        (json!({"query": "x", "count": 11}), "1 to 10"),
+        (json!({"query": "plastic love"}), "agentamp login"),
+    ] {
+        let answer = server.call("search_spotify", arguments);
         assert_eq!(answer["isError"], true, "{answer}");
         assert!(answer["content"][0]["text"].as_str().unwrap().contains(says), "{answer}");
     }

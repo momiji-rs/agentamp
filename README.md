@@ -77,6 +77,7 @@ agentamp play https://open.spotify.com/album/…
 agentamp play ~/Music/Album        # a folder, a file, or a link
 agentamp play yt: plastic love     # the first YouTube result
 agentamp play liked                # your Spotify Liked Songs
+agentamp search plastic love       # Spotify tracks, albums, playlists
 agentamp add --next song.flac      # after the current track
 agentamp now                       # ▶ Title · Artist  1:23 / 4:29
 agentamp --json now                # the same, for scripts and agents
@@ -103,8 +104,12 @@ page in the browser and keeps librespot's reusable credential in
 read; `agentamp logout` deletes it. Track, album and playlist links and
 `spotify:` URIs play, and `liked` plays your Liked Songs. Details for the
 first 200 songs of an album or playlist are read ahead; the rest show as
-URIs until they play. Spotify audio is never saved as music files: librespot
-keeps up to 2 GiB of it in its own encrypted cache
+URIs until they play. `search` lists Spotify's tracks, albums and playlists
+for a query (5 of each, `--count` up to 10), each with the URI to play. It
+asks with the same sign-in, the way Spotify's web player searches, as the
+Web API's search turns librespot's client away; should that query stop
+working, it falls back to tracks only. Spotify audio is never saved as
+music files: librespot keeps up to 2 GiB of it in its own encrypted cache
 (`~/.cache/agentamp/spotify-audio/`), so songs heard again are not
 downloaded again.
 
@@ -129,10 +134,10 @@ server on stdin and stdout, built on the official
 [Rust SDK](https://github.com/modelcontextprotocol/rust-sdk). It speaks the
 2026-07-28 revision and the older ones with the `initialize` handshake. Its
 tools are the CLI's controls: `play`, `add`, `pause`, `resume`, `next`,
-`previous`, `stop`, `clear_queue`, `set_volume`, `seek`, `now_playing` and
-`queue`. Each answers with the player's state as structured JSON, and a
-refusal (a missing file, Spotify without a sign-in) as a tool error the
-agent can read. `search_youtube` lists up to 20 videos for a query, with
+`previous`, `stop`, `clear_queue`, `set_volume`, `seek`, `now_playing`,
+`queue` and `search_spotify`, which lists what `search` does. Each answers
+as structured JSON, the controls with the player's state, and a refusal (a
+missing file, Spotify without a sign-in) as a tool error the agent can read. `search_youtube` lists up to 20 videos for a query, with
 their title, channel, length and a link to pass to `play` or `add`; it
 downloads nothing and leaves out live streams. Like the CLI it starts the
 background player when needed; `now_playing`, `queue` and `search_youtube`

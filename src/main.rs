@@ -9,6 +9,7 @@ mod paths;
 mod queue;
 mod resolve;
 mod spotify;
+mod spotify_search;
 mod tap;
 mod target;
 mod trace;
@@ -61,6 +62,13 @@ enum Cmd {
     Stop,
     /// Empty the queue after the current track.
     Clear,
+    /// Search Spotify for tracks, albums and playlists to play.
+    Search {
+        query: Vec<String>,
+        /// How many of each kind, 1 to 10.
+        #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u8).range(1..=10))]
+        count: u8,
+    },
     /// What is playing.
     Now,
     /// What plays next.
@@ -135,6 +143,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Prev => Request::Previous,
         Cmd::Stop => Request::Stop,
         Cmd::Clear => Request::Clear,
+        Cmd::Search { query, count } => Request::SearchSpotify { query: query.join(" "), count },
         Cmd::Now => Request::Status,
         Cmd::Queue => Request::Queue,
         Cmd::Volume { percent } => Request::Volume { percent },
@@ -261,8 +270,27 @@ fn describe(request: &Request, data: &Value) -> Option<String> {
             Some(format!("Added {added} track{}", if added == 1 { "" } else { "s" }))
         }
         Request::Play { .. } => status_line(&data["status"]),
+        Request::SearchSpotify { .. } => serde_json::from_value(data.clone()).ok().map(|f| found(&f)),
         _ => status_line(data),
     }
+}
+
+/// Search results by kind, each line ending with the target to play.
+fn found(found: &spotify_search::Found) -> String {
+    let mut lines = Vec::new();
+    for (kind, hits) in [("Tracks", &found.tracks), ("Albums", &found.albums), ("Playlists", &found.playlists)] {
+        if hits.is_empty() {
+            continue;
+        }
+        lines.push(kind.to_string());
+        lines.extend(hits.iter().map(|h| {
+            let by = if h.artist.is_empty() { String::new() } else { format!(" · {}", h.artist) };
+            let year = h.year.map_or(String::new(), |y| format!(" ({y})"));
+            let length = h.duration_ms.filter(|ms| *ms > 0).map_or(String::new(), |ms| format!("  {}", clock(ms)));
+            format!("  {}{by}{year}{length}  {}", h.title, h.target)
+        }));
+    }
+    if lines.is_empty() { "Nothing found".into() } else { lines.join("\n") }
 }
 
 fn status_line(data: &Value) -> Option<String> {

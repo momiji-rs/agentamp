@@ -17,6 +17,7 @@ use crate::ipc::{Request, Response};
 use crate::paths::Paths;
 use crate::resolve;
 use crate::spotify::Spotify;
+use crate::spotify_search;
 use crate::tap::Tap;
 use crate::youtube;
 
@@ -153,6 +154,18 @@ async fn handle(
                     return Response::error(e);
                 }
             }
+        }
+        Request::SearchSpotify { query, .. } if query.trim().is_empty() => {
+            return Response::error("say what to search for");
+        }
+        Request::SearchSpotify { query, count } => {
+            return match spotify_search::search(spotify, query.trim(), count).await {
+                Ok(found) => Response::ok(found),
+                Err(e) => {
+                    warn!("cannot search Spotify for {query}: {e:#}");
+                    Response::error(e)
+                }
+            };
         }
         request => Msg::Control(request, reply),
     };

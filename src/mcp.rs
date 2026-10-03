@@ -20,8 +20,8 @@ use crate::youtube::Found;
 
 const INSTRUCTIONS: &str = "AgentAmp plays Spotify (Premium, after `agentamp login`), YouTube and local files \
 through a background player that keeps going between calls. `play` replaces the queue, `add` extends it, \
-`now_playing` and `queue` say what is on without changing it. `search_youtube` lists videos to choose \
-from; pass a result's `target` to `play` or `add`. \
+`now_playing` and `queue` say what is on without changing it. `search_spotify` lists tracks, albums and \
+playlists, `search_youtube` lists videos; pass a result's `target` to `play` or `add`. \
 A YouTube track answers at once with `downloading: true` and plays when its file is here; one that fails \
 leaves the queue and `now_playing` gives the error.";
 
@@ -73,6 +73,17 @@ struct Search {
     /// How many results, 1 to 20.
     #[serde(default = "five")]
     #[schemars(range(min = 1, max = 20))]
+    count: u8,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(transform = plain_integers)]
+struct SpotifySearch {
+    /// What to look for, as you would type it into Spotify.
+    query: String,
+    /// How many of each kind, 1 to 10.
+    #[serde(default = "five")]
+    #[schemars(range(min = 1, max = 10))]
     count: u8,
 }
 
@@ -186,6 +197,22 @@ impl Player {
     #[tool(annotations(title = "Seek", destructive_hint = false, idempotent_hint = true, open_world_hint = false))]
     async fn seek(&self, Parameters(Seek { seconds }): Parameters<Seek>) -> Result<Json<Status>, String> {
         self.ask(Request::Seek { position_ms: seconds.saturating_mul(1000) }).await
+    }
+
+    /// Search Spotify for tracks, albums and playlists to play, without playing any. Needs the Spotify
+    /// sign-in, and starts the background player, which holds it.
+    #[tool(annotations(title = "Search Spotify", read_only_hint = true, open_world_hint = true))]
+    async fn search_spotify(
+        &self,
+        Parameters(SpotifySearch { query, count }): Parameters<SpotifySearch>,
+    ) -> Result<Json<crate::spotify_search::Found>, String> {
+        if query.trim().is_empty() {
+            return Err("say what to search for".into());
+        }
+        if !(1..=crate::spotify_search::MOST).contains(&count) {
+            return Err(format!("a search lists 1 to {} of each kind, not {count}", crate::spotify_search::MOST));
+        }
+        self.ask(Request::SearchSpotify { query, count }).await
     }
 
     /// Search YouTube for videos to play, without downloading or playing any. Live streams are left out.
