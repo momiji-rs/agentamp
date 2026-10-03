@@ -139,6 +139,8 @@ def main():
     parser.add_argument("--runs", type=int, default=10)
     parser.add_argument("--terminals", default="ghostty,foot,alacritty")
     args = parser.parse_args()
+    # Hyprland starts the terminal in its own directory, not ours.
+    args.binary = os.path.abspath(args.binary)
     trace = ROOT / "target/terminal-bench.trace"
     setup(args.terminals.split(","))
     for terminal in args.terminals.split(","):
