@@ -2,7 +2,7 @@
 
 How fast the window opens, step by step, and what is left to gain.
 
-## Current state (verified 2026-10-02, starship)
+## Current state (verified 2026-10-02, Arch Linux, Ryzen 7 8745HS, Hyprland)
 
 Medians in ms from the launch, with a local track playing and its cover
 cached, on a quiet machine (load below 6). Release build.
