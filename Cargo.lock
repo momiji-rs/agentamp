@@ -1758,7 +1758,6 @@ version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "88258620bf3e6808ea1fadd11639648d77c06280b9f5a4c9d14ea79f6f998af6"
 dependencies = [
- "cpal",
  "form_urlencoded",
  "futures-util",
  "librespot-audio",
@@ -1768,7 +1767,6 @@ dependencies = [
  "portable-atomic",
  "rand 0.9.5",
  "rand_distr",
- "rodio",
  "shell-words",
  "symphonia",
  "thiserror 2.0.21",

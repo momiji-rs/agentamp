@@ -17,13 +17,14 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "io-util", "sync", "time", "signal", "process"] }
 # Spotify: the session, playback, sign-in and catalogue metadata. Playback
-# needs Premium.
+# needs Premium. No audio backend: AgentAmp sends librespot's sound to the
+# device itself, through rodio.
 librespot-core = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
-librespot-playback = { version = "0.8", default-features = false, features = ["rodio-backend", "rustls-tls-native-roots"] }
+librespot-playback = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
 librespot-oauth = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
 librespot-metadata = { version = "0.8", default-features = false }
-# Local files and YouTube audio. The same rodio and symphonia librespot
-# already builds, so this adds no second decoder.
+# The sound out, and the decoder for local files and YouTube audio: the
+# same symphonia librespot decodes with, so there is no second decoder.
 rodio = { version = "0.21", default-features = false, features = ["playback", "mp3", "flac", "mp4", "vorbis", "wav"] }
 # Title, artist, album and duration of local files.
 lofty = "0.25"
