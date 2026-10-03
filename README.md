@@ -25,6 +25,9 @@ TUI changes are checked by looking: `scripts/screens.sh` renders the frames
 the tests keep in `target/screens/` with
 [termshot](https://github.com/momiji-rs/termshot).
 
+Start-up timing, its harnesses and what is left to gain:
+[docs/performance.md](docs/performance.md).
+
 `Cargo.lock` keeps `vergen` at 9.0.6: librespot-core 0.8's build script does
 not compile against vergen 9.1.
 
