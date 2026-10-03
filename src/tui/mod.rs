@@ -111,11 +111,14 @@ fn event_loop(
     let mut listening = false;
     let opened = std::time::Instant::now();
     let mut heard = false;
+    // When the status was read: the clock runs on from it while playing.
+    let mut read_at = opened;
     loop {
         for art in view.wanted() {
             covers.send(art)?;
         }
         let waiting = frames == 0 && !heard_all(heard, &view) && opened.elapsed() < FIRST_FRAME;
+        view.since_ms = read_at.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
         if dirty && !waiting {
             let start = std::time::Instant::now();
             terminal.draw(|frame| {
@@ -137,11 +140,20 @@ fn event_loop(
             listening = true;
             crate::trace::mark("input ready");
         }
-        // Sleeps until the daemon or the terminal says something, then
-        // takes all that came in, so one frame shows it all.
+        // Sleeps until the daemon or the terminal says something, or the
+        // clock turns a second, then takes all that came in, so one frame
+        // shows it all.
         let wake = if waiting {
             match wakes.recv_timeout(FIRST_FRAME.saturating_sub(opened.elapsed())) {
                 Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                wake => wake?,
+            }
+        } else if let Some(tick) = next_second(&view) {
+            match wakes.recv_timeout(tick) {
+                Err(mpsc::RecvTimeoutError::Timeout) => {
+                    dirty = true;
+                    continue;
+                }
                 wake => wake?,
             }
         } else {
@@ -160,12 +172,19 @@ fn event_loop(
                     if let (Some(graphics), Update::Art { art, loaded: Some(loaded) }) = (graphics.as_mut(), &mut update) {
                         graphics.offer(art.clone(), std::mem::take(&mut loaded.image));
                     }
-                    heard |= matches!(update, Update::Snapshot { .. });
+                    if matches!(update, Update::Snapshot { .. }) {
+                        heard = true;
+                        read_at = std::time::Instant::now();
+                    }
                     dirty |= view.apply(update);
                 }
                 Wake::Input(Event::Key(key)) if key.kind == KeyEventKind::Press => {
                     keys += 1;
                     crate::trace::mark(format!("key {keys}"));
+                    // A control starts from where the song is now.
+                    view.since_ms = read_at.elapsed().as_millis().min(u128::from(u32::MAX)) as u32;
+                    view.settle_clock();
+                    read_at = std::time::Instant::now();
                     match view.key(key) {
                         Some(Command::Quit) => return Ok(Exit::Quit),
                         Some(Command::Send(request)) => jobs.send(request)?,
@@ -182,6 +201,12 @@ fn event_loop(
             }
         }
     }
+}
+
+/// How long until the shown clock turns its next second, while it runs.
+fn next_second(view: &View) -> Option<Duration> {
+    (view.status.state == State::Playing && view.status.track.is_some())
+        .then(|| Duration::from_millis(u64::from(1000 - view.position_ms() % 1000)))
 }
 
 /// Whether the window has what its first frame should show: the player's
@@ -316,6 +341,7 @@ impl View {
                 self.status = status;
                 self.upcoming = upcoming;
                 self.history = history;
+                self.since_ms = 0;
                 changed
             }
             Update::Art { art, loaded } => {
@@ -345,6 +371,12 @@ impl View {
         self.covers.retain(|key, _| keep.contains(key));
         self.covers.insert(art.clone(), Cover::Loading);
         vec![art]
+    }
+
+    /// Folds the time run since the status was read into its position.
+    fn settle_clock(&mut self) {
+        self.status.position_ms = self.position_ms();
+        self.since_ms = 0;
     }
 
     /// Acts on a key. Controls show their result at once; the next

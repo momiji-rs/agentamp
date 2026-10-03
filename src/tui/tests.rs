@@ -208,6 +208,46 @@ fn an_unchanged_snapshot_needs_no_redraw() {
 }
 
 #[test]
+fn the_clock_runs_between_snapshots() {
+    let mut view = demo();
+    view.since_ms = 2_400;
+    assert_eq!(view.position_ms(), 85_400);
+    assert!(text(&view, 140, 40).contains("1:25"), "the shown time moves on");
+    assert_eq!(next_second(&view), Some(Duration::from_millis(600)));
+    // Never past the end.
+    view.since_ms = 1_000_000;
+    assert_eq!(view.position_ms(), 334_000);
+    // Paused, it stands still and nothing needs waking.
+    view.since_ms = 2_400;
+    view.status.state = State::Paused;
+    assert_eq!(view.position_ms(), 83_000);
+    assert_eq!(next_second(&view), None);
+}
+
+#[test]
+fn controls_start_from_where_the_song_is() {
+    let mut view = demo();
+    view.since_ms = 5_000;
+    view.settle_clock();
+    assert_eq!((view.status.position_ms, view.since_ms), (88_000, 0));
+    assert_eq!(press(&mut view, KeyCode::Right), Some(Command::Send(Request::Seek { position_ms: 98_000 })));
+    // Pausing keeps the time shown, not the time last read.
+    view.since_ms = 1_500;
+    view.settle_clock();
+    press(&mut view, KeyCode::Char(' '));
+    assert_eq!(view.position_ms(), 99_500);
+}
+
+#[test]
+fn a_snapshot_restarts_the_clock() {
+    let mut view = demo();
+    view.since_ms = 900;
+    let status = Box::new(view.status.clone());
+    view.apply(Update::Snapshot { status, upcoming: Vec::new(), history: Vec::new() });
+    assert_eq!(view.since_ms, 0);
+}
+
+#[test]
 fn frame_sizes_are_checked() {
     assert_eq!(parse_size("120x36").unwrap(), (120, 36));
     assert!(parse_size("120").is_err());

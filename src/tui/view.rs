@@ -69,6 +69,8 @@ pub struct View {
     pub busy: bool,
     pub icons: &'static Icons,
     pub covers: HashMap<String, Cover>,
+    /// How long ago the status was read, so the clock runs between reads.
+    pub since_ms: u32,
 }
 
 impl Default for View {
@@ -89,6 +91,23 @@ impl Default for View {
             busy: false,
             icons: &icons::NERD,
             covers: HashMap::new(),
+            since_ms: 0,
+        }
+    }
+}
+
+impl View {
+    /// Where the song is now: the status's position, moved on by the time
+    /// since it was read while playing, and never past the end.
+    pub fn position_ms(&self) -> u32 {
+        let status = &self.status;
+        if status.state != State::Playing {
+            return status.position_ms;
+        }
+        let now = status.position_ms.saturating_add(self.since_ms);
+        match status.track.as_ref().map_or(0, |t| t.duration_ms) {
+            0 => now,
+            length => now.min(length),
         }
     }
 }
@@ -246,7 +265,7 @@ fn queue(frame: &mut Frame, area: Rect, view: &View) {
     let heading = |text: &'static str| Paragraph::new(Line::styled(text, Style::new().fg(TEXT).add_modifier(Modifier::BOLD)));
     if let Some(track) = current {
         frame.render_widget(heading("Now playing"), take(&mut rest, 1));
-        let mark = equaliser(view.status.state, view.status.position_ms);
+        let mark = equaliser(view.status.state, view.position_ms());
         frame.render_widget(table(vec![row(&mark, track, true, wide)]), take(&mut rest, 3));
     }
     if !view.upcoming.is_empty() {
@@ -394,7 +413,7 @@ fn player_bar(frame: &mut Frame, area: Rect, view: &View) {
     ])
     .centered();
     let length = status.track.as_ref().map_or(0, |t| t.duration_ms);
-    let progress = bar(middle.width.min(MAX_PROGRESS), status.position_ms, length);
+    let progress = bar(middle.width.min(MAX_PROGRESS), view.position_ms(), length);
     frame.render_widget(Paragraph::new(vec![controls, progress]), middle);
 
     let icon = match status.volume {
