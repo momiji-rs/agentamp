@@ -105,6 +105,22 @@ struct Browse {
     count: u8,
 }
 
+#[derive(Deserialize, JsonSchema)]
+#[schemars(transform = plain_integers)]
+struct Window {
+    /// Skip this many of the upcoming tracks.
+    #[serde(default)]
+    offset: usize,
+    /// How many upcoming tracks, 1 to 100.
+    #[serde(default = "twenty_upcoming")]
+    #[schemars(range(min = 1, max = 100))]
+    count: usize,
+}
+
+fn twenty_upcoming() -> usize {
+    20
+}
+
 fn five() -> u8 {
     5
 }
@@ -127,11 +143,22 @@ struct Added {
     status: Status,
 }
 
+/// The queue as the daemon gives it, whole.
+#[derive(Deserialize)]
+struct Whole {
+    current: Option<Track>,
+    upcoming: Vec<Track>,
+}
+
 #[derive(Serialize, Deserialize, JsonSchema)]
+#[schemars(transform = plain_integers)]
 struct Queue {
     current: Option<Track>,
-    /// What plays after the current track, in order.
+    /// What plays after the current track, in order, from `offset`.
     upcoming: Vec<Track>,
+    offset: usize,
+    /// How many tracks play after the current one in all.
+    total: usize,
 }
 
 #[derive(Clone)]
@@ -277,10 +304,14 @@ impl Player {
         self.ask(Request::Status).await
     }
 
-    /// The current track and what plays after it. Never starts the player.
+    /// The current track and up to `count` of what plays after it, from `offset`, with how many
+    /// there are in all. Never starts the player.
     #[tool(annotations(title = "Queue", read_only_hint = true, open_world_hint = false))]
-    async fn queue(&self) -> Result<Json<Queue>, String> {
-        self.ask(Request::Queue).await
+    async fn queue(&self, Parameters(Window { offset, count }): Parameters<Window>) -> Result<Json<Queue>, String> {
+        let Json(Whole { current, upcoming }) = self.ask(Request::Queue).await?;
+        let total = upcoming.len();
+        let upcoming = upcoming.into_iter().skip(offset).take(count.clamp(1, 100)).collect();
+        Ok(Json(Queue { current, upcoming, offset, total }))
     }
 }
 

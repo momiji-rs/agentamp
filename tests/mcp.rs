@@ -163,6 +163,7 @@ fn clients_with_the_handshake_get_every_tool() {
     assert_eq!(tool("search_youtube")["inputSchema"]["required"], json!(["query"]));
     assert_eq!(tool("play")["annotations"]["destructiveHint"], true);
     assert_eq!(tool("play")["inputSchema"]["required"], json!(["target"]));
+    assert_eq!(tool("queue")["inputSchema"]["properties"]["count"]["maximum"], 100);
     assert_eq!(tool("set_volume")["inputSchema"]["properties"]["percent"]["maximum"], 100);
 }
 
@@ -193,6 +194,9 @@ fn clients_without_the_handshake_play_and_control() {
     let queue = server.call("queue", json!({}))["structuredContent"].clone();
     assert_eq!(queue["current"]["title"], "1 First");
     assert_eq!(queue["upcoming"][0]["title"], "2 Second");
+    assert_eq!((queue["offset"].clone(), queue["total"].clone()), (json!(0), json!(1)));
+    let past = server.call("queue", json!({"offset": 1, "count": 1}))["structuredContent"].clone();
+    assert_eq!((past["upcoming"].clone(), past["total"].clone()), (json!([]), json!(1)));
 
     assert_eq!(server.call("pause", json!({}))["structuredContent"]["state"], "paused");
     assert_eq!(server.call("resume", json!({}))["structuredContent"]["state"], "playing");

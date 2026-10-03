@@ -169,7 +169,9 @@ tools are the CLI's controls: `play`, `add`, `pause`, `resume`, `next`,
 `queue`, `search_spotify` and `browse`, which list what `search` and
 `browse` do. Each answers as structured JSON, the controls with the
 player's state, and a refusal (a missing file, Spotify without a sign-in)
-as a tool error the agent can read. `search_youtube` lists up to 20 videos for a query, with
+as a tool error the agent can read. `queue` lists 20 upcoming tracks
+(`count` up to 100, from `offset`) and says how many there are in all, so
+a long playlist does not fill the agent's context. `search_youtube` lists up to 20 videos for a query, with
 their title, channel, length and a link to pass to `play` or `add`; it
 downloads nothing and leaves out live streams. Like the CLI it starts the
 background player when needed; `now_playing`, `queue` and `search_youtube`
