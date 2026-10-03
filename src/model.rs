@@ -2,9 +2,20 @@
 
 use std::time::Duration;
 
+use schemars::{JsonSchema, Schema};
 use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Drops the `uint32`-style formats schemars gives unsigned integers: they
+/// are no JSON Schema format, and validators warn about each one. Their
+/// `minimum: 0` stays.
+pub fn plain_integers(schema: &mut Schema) {
+    if schema.get("format").and_then(|f| f.as_str()).is_some_and(|f| f.starts_with("uint")) {
+        schema.remove("format");
+    }
+    schemars::transform::transform_subschemas(&mut plain_integers, schema);
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Source {
     Spotify,
@@ -12,7 +23,8 @@ pub enum Source {
     Youtube,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[schemars(transform = plain_integers)]
 pub struct Track {
     pub source: Source,
     /// A `spotify:track:` URI, or the path of an audio file.
@@ -58,7 +70,7 @@ impl Track {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum State {
     Stopped,
@@ -66,12 +78,16 @@ pub enum State {
     Paused,
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, JsonSchema)]
+#[schemars(transform = plain_integers)]
 pub struct Status {
     pub state: State,
+    /// What is playing or paused; none once stopped.
     pub track: Option<Track>,
     pub position_ms: u32,
+    /// 0 to 100.
     pub volume: u8,
+    /// How many tracks wait after this one.
     pub queue_len: usize,
     /// Why playback stopped by itself, until the next track starts.
     #[serde(default, skip_serializing_if = "Option::is_none")]

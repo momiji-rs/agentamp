@@ -9,8 +9,8 @@ built to be driven by agents as much as by hands.
   [librespot](https://github.com/librespot-org/librespot)), YouTube (through
   an installed [yt-dlp](https://github.com/yt-dlp/yt-dlp)), and local MP3,
   FLAC, AAC, Ogg Vorbis and WAV files.
-- **Agent native.** Every control is a CLI command with `--json` output, so an
-  agent can act as your DJ.
+- **Agent native.** Every control is a CLI command with `--json` output and
+  a tool of its MCP server, so an agent can act as your DJ.
 
 AgentAmp is an early proof of concept.
 
@@ -104,3 +104,29 @@ breach YouTube's terms. `AGENTAMP_YTDLP` points at another yt-dlp.
 
 `AGENTAMP_HOME=<dir>` keeps every file under one directory, and
 `AGENTAMP_AUDIO=null` plays silently while keeping time; the tests use both.
+
+## Agents
+
+`agentamp mcp` is a [Model Context Protocol](https://modelcontextprotocol.io)
+server on stdin and stdout, built on the official
+[Rust SDK](https://github.com/modelcontextprotocol/rust-sdk). It speaks the
+2026-07-28 revision and the older ones with the `initialize` handshake. Its
+tools are the CLI's controls: `play`, `add`, `pause`, `resume`, `next`,
+`previous`, `stop`, `clear_queue`, `set_volume`, `seek`, `now_playing` and
+`queue`. Each answers with the player's state as structured JSON, and a
+refusal (a missing file, Spotify without a sign-in) as a tool error the
+agent can read. Like the CLI it starts the background player when needed;
+`now_playing` and `queue` never do. It runs no network listener of its own.
+
+```sh
+claude mcp add agentamp -- agentamp mcp     # Claude Code
+```
+
+Other clients take the same command in their configuration:
+
+```json
+{ "mcpServers": { "agentamp": { "command": "agentamp", "args": ["mcp"] } } }
+```
+
+Give `play` and `add` absolute paths: a relative one is read from the
+directory the client started the server in.

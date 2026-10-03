@@ -3,6 +3,7 @@ mod deck;
 mod engine;
 mod ipc;
 mod library;
+mod mcp;
 mod model;
 mod paths;
 mod queue;
@@ -78,6 +79,8 @@ enum Cmd {
     Login,
     /// Forget the Spotify sign-in.
     Logout,
+    /// Serve the Model Context Protocol on stdin and stdout, for agents.
+    Mcp,
     /// Run the player in the foreground (it starts by itself otherwise).
     Daemon,
     /// Stop the background player.
@@ -108,6 +111,7 @@ fn run(cli: Cli) -> Result<()> {
             return Ok(());
         }
         Cmd::Daemon => return run_daemon(paths),
+        Cmd::Mcp => return mcp::run(paths),
         Cmd::Login => {
             let name = spotify::login(&paths)?;
             println!("Signed in to Spotify as {name}.");

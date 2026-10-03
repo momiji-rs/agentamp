@@ -43,6 +43,12 @@ bytes = "1"
 # elsewhere the window draws its own half blocks. Without chafa or the
 # image crate's other formats.
 ratatui-image = { version = "=12.0.0-rc.0", default-features = false, features = ["crossterm"] }
+# `agentamp mcp`: the official Model Context Protocol SDK, as a server on
+# stdio only. It follows each revision of the spec (2026-07-28 dropped the
+# `initialize` handshake) and still answers clients of the older ones.
+rmcp = { version = "3.5", default-features = false, features = ["server", "macros", "transport-io"] }
+# The tools' input and output schemas, derived from the types they carry.
+schemars = "1"
 # The same width tables ratatui lays out with, to place the cursor in --frame output.
 unicode-width = "0.2"
 
