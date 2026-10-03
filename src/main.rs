@@ -8,6 +8,7 @@ mod paths;
 mod queue;
 mod resolve;
 mod spotify;
+mod tap;
 mod target;
 mod trace;
 mod tui;

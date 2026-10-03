@@ -34,6 +34,9 @@ pub enum Request {
     Volume { percent: u8 },
     Seek { position_ms: u32 },
     Shutdown,
+    /// Stream the sound as it plays, for drawing it: after the answer the
+    /// connection carries `tap` chunks, not JSON.
+    Listen,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

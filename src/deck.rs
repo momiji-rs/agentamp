@@ -10,6 +10,7 @@ use anyhow::{Context, Result, anyhow};
 use rodio::{Decoder, OutputStreamBuilder, Sink, mixer::Mixer};
 
 use crate::model::Track;
+use crate::tap::Tap;
 
 /// Called once when a loaded track finishes or is stopped.
 pub type OnEnd = Box<dyn FnOnce() + Send>;
@@ -30,30 +31,24 @@ pub trait Deck: Send {
 }
 
 /// Plays through the default output device with rodio.
-#[derive(Default)]
 pub struct RodioDeck {
     output: Option<Output>,
     sink: Option<Arc<Sink>>,
     volume: f32,
+    tap: Arc<Tap>,
 }
 
-struct Output {
-    mixer: Mixer,
+/// The default output device, open.
+pub struct Output {
+    pub mixer: Mixer,
     /// Dropping this ends the thread that owns the device stream.
     _hold: std::sync::mpsc::Sender<()>,
 }
 
-impl RodioDeck {
-    pub fn new(volume: u8) -> Self {
-        Self { volume: f32::from(volume) / 100.0, ..Self::default() }
-    }
-
-    /// Opens the device on first use. The stream lives on its own thread
-    /// because it cannot move between threads on every platform.
-    fn mixer(&mut self) -> Result<Mixer> {
-        if let Some(output) = &self.output {
-            return Ok(output.mixer.clone());
-        }
+impl Output {
+    /// The stream lives on its own thread because it cannot move between
+    /// threads on every platform.
+    pub fn open() -> Result<Self> {
         let (ready_tx, ready_rx) = std::sync::mpsc::channel();
         let (hold_tx, hold_rx) = std::sync::mpsc::channel::<()>();
         std::thread::Builder::new().name("audio-out".into()).spawn(move || {
@@ -71,8 +66,21 @@ impl RodioDeck {
         let mixer = ready_rx
             .recv()?
             .map_err(|e| anyhow!("no audio output device: {e}"))?;
-        self.output = Some(Output { mixer: mixer.clone(), _hold: hold_tx });
-        Ok(mixer)
+        Ok(Self { mixer, _hold: hold_tx })
+    }
+}
+
+impl RodioDeck {
+    pub fn new(volume: u8, tap: Arc<Tap>) -> Self {
+        Self { output: None, sink: None, volume: f32::from(volume) / 100.0, tap }
+    }
+
+    /// Opens the device on first use.
+    fn mixer(&mut self) -> Result<Mixer> {
+        if self.output.is_none() {
+            self.output = Some(Output::open()?);
+        }
+        Ok(self.output.as_ref().expect("just opened").mixer.clone())
     }
 }
 
@@ -84,7 +92,7 @@ impl Deck for RodioDeck {
         let decoder = Decoder::try_from(file).with_context(|| format!("cannot decode {}", path.display()))?;
         let sink = Arc::new(Sink::connect_new(&self.mixer()?));
         sink.set_volume(self.volume);
-        sink.append(decoder);
+        sink.append(self.tap.wrap(decoder));
         let waiter = sink.clone();
         std::thread::Builder::new().name("track-end".into()).spawn(move || {
             waiter.sleep_until_end();

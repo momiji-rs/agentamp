@@ -15,6 +15,7 @@ use crate::ipc::{Request, Response};
 use crate::model::{Source, State, Status, Track};
 use crate::queue::Queue;
 use crate::spotify::{self, Spotify, SpotifyDeck};
+use crate::tap::Tap;
 
 /// Within this much of a track's start, Previous goes to the track before.
 const RESTART_WINDOW_MS: u32 = 3_000;
@@ -51,10 +52,17 @@ pub struct Engine {
     spotify_deck: Option<SpotifyDeck>,
     connecting: bool,
     tx: mpsc::UnboundedSender<Msg>,
+    tap: Arc<Tap>,
 }
 
 impl Engine {
-    pub fn new(files: Box<dyn Deck>, volume: u8, spotify: Arc<Spotify>, tx: mpsc::UnboundedSender<Msg>) -> Self {
+    pub fn new(
+        files: Box<dyn Deck>,
+        volume: u8,
+        spotify: Arc<Spotify>,
+        tx: mpsc::UnboundedSender<Msg>,
+        tap: Arc<Tap>,
+    ) -> Self {
         Self {
             queue: Queue::default(),
             state: State::Stopped,
@@ -66,6 +74,7 @@ impl Engine {
             spotify_deck: None,
             connecting: false,
             tx,
+            tap,
         }
     }
 
@@ -157,6 +166,7 @@ impl Engine {
             Request::Queue => return Ok(serde_json::to_value(&self.queue)?),
             Request::Status | Request::Shutdown => {}
             Request::Play { .. } | Request::Add { .. } => bail!("play and add are resolved first"),
+            Request::Listen => bail!("listening is answered by the connection"),
         }
         Ok(serde_json::to_value(self.status())?)
     }
@@ -294,7 +304,7 @@ impl Engine {
                         self.connect();
                         return Ok(());
                     };
-                    let (deck, mut events) = SpotifyDeck::new(session, self.volume)?;
+                    let (deck, mut events) = SpotifyDeck::new(session, self.volume, self.tap.clone())?;
                     let tx = self.tx.clone();
                     tokio::spawn(async move {
                         while let Some(event) = events.recv().await {
@@ -410,7 +420,7 @@ mod tests {
         static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let paths = crate::paths::Paths::under(&crate::testutil::scratch(&format!("engine-{n}")));
-        tokio::spawn(Engine::new(Box::new(NullDeck::default()), 80, Spotify::new(paths), tx.clone()).run(rx));
+        tokio::spawn(Engine::new(Box::new(NullDeck::default()), 80, Spotify::new(paths), tx.clone(), Default::default()).run(rx));
         tx
     }
 

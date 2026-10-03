@@ -195,3 +195,26 @@ fn youtube_searches_download_into_the_cache() {
     assert!(!ok);
     assert!(err.contains("Video unavailable"), "{err}");
 }
+
+#[test]
+fn windows_can_listen_to_the_sound() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    let home = Home::new("listen");
+    wav(&home.0.join("music/Quiet.wav"), 60);
+    home.ok(&["play", home.0.join("music").to_str().unwrap()]);
+
+    let mut socket = std::os::unix::net::UnixStream::connect(home.0.join("run/agentamp.sock")).unwrap();
+    socket.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    socket.write_all(b"{\"cmd\":\"listen\"}\n").unwrap();
+    let mut reader = BufReader::new(socket);
+    let mut answer = String::new();
+    reader.read_line(&mut answer).unwrap();
+    assert!(answer.starts_with("{\"ok\":true"), "{answer}");
+    // Silent audio taps nothing, so what comes is the chunk of none that
+    // checks the window is still there: no rate yet, no samples.
+    let mut head = [0u8; 8];
+    reader.read_exact(&mut head).unwrap();
+    assert_eq!(head, [0; 8]);
+    // Other connections are answered meanwhile.
+    assert_eq!(home.json(&["now"])["state"], "playing");
+}
