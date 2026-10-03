@@ -188,6 +188,8 @@ impl Player {
     }
 
     /// Search YouTube for videos to play, without downloading or playing any. Live streams are left out.
+    /// For a song, prefer the artist's own channel or its "<Artist> - Topic" channel, which carries the
+    /// label's audio; covers, reuploads and sped-up or slowed edits often rank alongside them.
     #[tool(annotations(title = "Search YouTube", read_only_hint = true, open_world_hint = true))]
     async fn search_youtube(&self, Parameters(Search { query, count }): Parameters<Search>) -> Result<Json<Results>, String> {
         if query.trim().is_empty() {
