@@ -43,6 +43,8 @@ enum Update {
 enum Wake {
     Update(Update),
     Input(Event),
+    /// The terminal is gone: its window was closed without a hang-up signal.
+    Closed,
 }
 
 impl From<Update> for Wake {
@@ -71,11 +73,28 @@ pub fn run(paths: Paths) -> Result<()> {
     let mut graphics = graphics::Graphics::detect();
     crate::trace::mark(format!("graphics {}", if graphics.is_some() { "images" } else { "blocks" }));
     // After the image query, which reads its answers from the terminal itself.
+    #[cfg(unix)]
+    {
+        let wakes = input_wakes.clone();
+        std::thread::Builder::new().name("hang-up".into()).spawn(move || watch_hang_up(wakes))?;
+    }
     std::thread::Builder::new().name("input".into()).spawn(move || read_input(input_wakes))?;
     let result = event_loop(&mut terminal, &mut graphics, &jobs, &covers, &received);
-    ratatui::restore();
+    // A closed terminal has nothing to restore or show the cursor in, and
+    // the complaint about it would go to a closed stderr, which aborts.
+    if matches!(result, Ok(Exit::Closed)) {
+        std::mem::forget(terminal);
+    } else {
+        ratatui::restore();
+    }
     crate::trace::flush();
-    result
+    result.map(|_| ())
+}
+
+/// Why the window ended.
+enum Exit {
+    Quit,
+    Closed,
 }
 
 fn event_loop(
@@ -84,7 +103,7 @@ fn event_loop(
     jobs: &mpsc::Sender<Request>,
     covers: &mpsc::Sender<String>,
     wakes: &mpsc::Receiver<Wake>,
-) -> Result<()> {
+) -> Result<Exit> {
     let mut view = View { icons: icons::from_env(), ..View::default() };
     let mut dirty = true;
     let mut frames = 0u32;
@@ -148,7 +167,7 @@ fn event_loop(
                     keys += 1;
                     crate::trace::mark(format!("key {keys}"));
                     match view.key(key) {
-                        Some(Command::Quit) => return Ok(()),
+                        Some(Command::Quit) => return Ok(Exit::Quit),
                         Some(Command::Send(request)) => jobs.send(request)?,
                         None => {}
                     }
@@ -156,6 +175,7 @@ fn event_loop(
                 }
                 Wake::Input(Event::Resize(..)) => dirty = true,
                 Wake::Input(_) => {}
+                Wake::Closed => return Ok(Exit::Closed),
             }
         }
     }
@@ -168,10 +188,33 @@ fn heard_all(heard: bool, view: &View) -> bool {
     heard && !art.is_some_and(|art| matches!(view.covers.get(art), Some(Cover::Loading) | None))
 }
 
-/// Hands the terminal's events to the window as they come.
+/// Hands the terminal's events to the window as they come, and says when
+/// the terminal is gone, so the window does not outlive it.
 fn read_input(wakes: mpsc::Sender<Wake>) {
     while let Ok(event) = event::read() {
         if wakes.send(Wake::Input(event)).is_err() {
+            return;
+        }
+    }
+    let _ = wakes.send(Wake::Closed);
+}
+
+/// Sleeps until the terminal hangs up. A terminal closed without sending
+/// SIGHUP leaves crossterm's reader spinning instead of failing
+/// (crossterm-rs/crossterm#793), so the window would live on at full CPU.
+#[cfg(unix)]
+fn watch_hang_up(wakes: mpsc::Sender<Wake>) {
+    // No events asked for: poll still reports a hang-up or an error, and
+    // ignores input, which is the reader's.
+    let mut terminal = libc::pollfd { fd: libc::STDIN_FILENO, events: 0, revents: 0 };
+    loop {
+        // SAFETY: one valid pollfd, for as long as the call.
+        let ready = unsafe { libc::poll(&mut terminal, 1, -1) };
+        if ready > 0 && terminal.revents & (libc::POLLHUP | libc::POLLERR | libc::POLLNVAL) != 0 {
+            let _ = wakes.send(Wake::Closed);
+            return;
+        }
+        if ready < 0 && std::io::Error::last_os_error().kind() != std::io::ErrorKind::Interrupted {
             return;
         }
     }

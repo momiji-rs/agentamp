@@ -30,6 +30,7 @@ dependencies = [
  "env_logger",
  "http",
  "image",
+ "libc",
  "librespot-core",
  "librespot-metadata",
  "librespot-oauth",
