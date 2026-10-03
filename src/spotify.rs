@@ -83,6 +83,13 @@ async fn liked(session: &Session) -> Result<Vec<String>> {
     Ok(context.pages.iter().flat_map(|p| &p.tracks).filter_map(|t| t.uri.clone()).collect())
 }
 
+/// What Spotify plays for a URI, as its own clients ask: for an artist,
+/// their popular songs and more from their releases.
+async fn context(session: &Session, uri: &str) -> Result<Vec<String>> {
+    let context = session.spclient().get_context(uri).await?;
+    Ok(context.pages.iter().flat_map(|p| &p.tracks).filter_map(|t| t.uri.clone()).collect())
+}
+
 /// One session for the daemon, connected on first use and again after it
 /// drops.
 pub struct Spotify {
@@ -116,7 +123,7 @@ impl Spotify {
         self.session.try_lock().ok()?.as_ref().filter(|s| !s.is_invalid()).cloned()
     }
 
-    /// The tracks of a track, album or playlist URI, or of Liked Songs,
+    /// The tracks of a track, album, playlist or artist URI, or of Liked Songs,
     /// without details yet.
     pub async fn expand(&self, kind: SpotifyKind, uri: &str) -> Result<Vec<Track>> {
         let session = self.session().await?;
@@ -126,6 +133,7 @@ impl Spotify {
             SpotifyKind::Playlist => {
                 Playlist::get(&session, &SpotifyUri::from_uri(uri)?).await?.tracks().filter_map(|u| u.to_uri().ok()).collect()
             }
+            SpotifyKind::Artist => context(&session, uri).await?,
             SpotifyKind::Liked => liked(&session).await?,
         };
         Ok(uris.into_iter().filter(|u| u.starts_with("spotify:track:")).map(|u| Track::placeholder(Source::Spotify, u)).collect())

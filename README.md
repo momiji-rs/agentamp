@@ -101,10 +101,11 @@ and your speaker turn it up or down.
 Spotify needs a Premium account. `agentamp login` opens Spotify's sign-in
 page in the browser and keeps librespot's reusable credential in
 `~/.config/agentamp/credentials.json`, in a directory only your user can
-read; `agentamp logout` deletes it. Track, album and playlist links and
-`spotify:` URIs play, and `liked` plays your Liked Songs. Details for the
-first 200 songs of an album or playlist are read ahead; the rest show as
-URIs until they play. `search` lists Spotify's tracks, albums and playlists
+read; `agentamp logout` deletes it. Track, album, playlist and artist
+links and `spotify:` URIs play, an artist as Spotify plays them (their
+popular songs, then more of their releases), and `liked` plays your Liked
+Songs. Details for the first 200 songs of an album or playlist are read
+ahead; the rest show as URIs until they play. `search` lists Spotify's tracks, albums and playlists
 for a query (5 of each, `--count` up to 10), each with the URI to play. It
 asks with the same sign-in, the way Spotify's web player searches, as the
 Web API's search turns librespot's client away; should that query stop

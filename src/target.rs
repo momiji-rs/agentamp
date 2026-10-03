@@ -21,6 +21,8 @@ pub enum SpotifyKind {
     Track,
     Album,
     Playlist,
+    /// What Spotify plays for an artist: their popular songs and more.
+    Artist,
     Liked,
 }
 
@@ -30,6 +32,7 @@ impl SpotifyKind {
             "track" => Some(Self::Track),
             "album" => Some(Self::Album),
             "playlist" => Some(Self::Playlist),
+            "artist" => Some(Self::Artist),
             _ => None,
         }
     }
@@ -117,7 +120,7 @@ fn liked() -> Target {
 
 fn spotify(kind: &str, id: &str, input: &str) -> Result<Target> {
     let Some(kind_value) = SpotifyKind::parse(kind) else {
-        bail!("AgentAmp plays Spotify tracks, albums and playlists, not this: {input}");
+        bail!("AgentAmp plays Spotify tracks, albums, playlists and artists, not this: {input}");
     };
     let id = id.split(['?', '#']).next().unwrap_or_default();
     if id.len() != 22 || !id.chars().all(|c| c.is_ascii_alphanumeric()) {
@@ -182,6 +185,9 @@ mod tests {
             parse(&format!("https://open.spotify.com/album/{ID}")).unwrap(),
             Target::Spotify { kind: SpotifyKind::Album, uri: format!("spotify:album:{ID}") }
         );
+        let artist = Target::Spotify { kind: SpotifyKind::Artist, uri: format!("spotify:artist:{ID}") };
+        assert_eq!(parse(&format!("spotify:artist:{ID}")).unwrap(), artist);
+        assert_eq!(parse(&format!("https://open.spotify.com/intl-ja/artist/{ID}?si=x")).unwrap(), artist);
     }
 
     #[test]
@@ -195,7 +201,7 @@ mod tests {
 
     #[test]
     fn unsupported_spotify_links_are_refused() {
-        assert!(parse(&format!("spotify:artist:{ID}")).is_err());
+        assert!(parse(&format!("spotify:show:{ID}")).is_err());
         assert!(parse("spotify:track:short").is_err());
         assert!(parse("spotify:track").is_err());
     }
