@@ -37,11 +37,11 @@ cached, on a quiet machine (load below 6). Release build.
 AGENTAMP_TRACE=<file> agentamp        # marks each step, µs since 1970
 cargo build --release
 cargo run --release --example startup_bench -- --terminal kitty|sixel|plain|silent
-scripts/terminal-bench.py --terminals ghostty,ghostty-warm,foot,alacritty
+cargo run --release --example terminal_bench -- --terminals ghostty,ghostty-warm,foot,alacritty
 ```
 
 `startup_bench` plays the terminal in a pseudo-terminal, presses `/`
-on the first frame and times the prompt. `terminal-bench.py` opens real
+on the first frame and times the prompt. `terminal_bench` opens real
 terminals on a headless Hyprland output, out of sight. Both read the
 daemon at `AGENTAMP_HOME`; play a long track there first. Load from other
 work skews both: check `uptime` and rerun on a quiet machine.
