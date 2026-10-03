@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """Times the window's start, step by step, in a pseudo-terminal.
 
-    scripts/startup-bench.py [--runs 20] [--terminal kitty|plain|silent] [--size 140x40] [BINARY]
+    scripts/startup-bench.py [--runs 20] [--terminal kitty|sixel|plain|silent] [--size 140x40] [BINARY]
 
 The harness plays the terminal: it answers the image query the way kitty
-(images), a plain 24-bit terminal (half blocks) or a terminal that answers
+(images), foot (Sixel), a plain 24-bit terminal (half blocks) or a terminal that answers
 nothing would. It reads the window's AGENTAMP_TRACE marks, presses `/` as
 soon as the first frame has arrived and times how long the prompt takes to
 show, then quits with `q`. Times are milliseconds from the spawn; each row
@@ -33,6 +33,8 @@ ROOT = Path(__file__).resolve().parent.parent
 ANSWERS = {
     # Kitty graphics OK, primary attributes, 10x20 cells, then the status.
     "kitty": b"\x1b_Gi=31;OK\x1b\\\x1b[?62;22c\x1b[6;20;10t\x1b[0n",
+    # Sixel graphics (attribute 4), as foot answers.
+    "sixel": b"\x1b[?62;4;22c\x1b[6;20;10t\x1b[0n",
     "plain": b"\x1b[?62;22c\x1b[6;20;10t\x1b[0n",
     "silent": b"",
 }
