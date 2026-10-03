@@ -18,7 +18,7 @@ AgentAmp is an early proof of concept.
 
 ![The Play prompt, taking a link, a yt: search or a path](docs/images/prompt.png)
 
-Both are the tests' demo frames, rendered by `scripts/screens.sh` with
+Both are the tests' demo frames, rendered by `TERMSHOT_PX=48 scripts/screens.sh` with
 [termshot](https://github.com/momiji-rs/termshot). Covers are drawn in half
 blocks there; kitty, Ghostty, foot, WezTerm and iTerm2 show the picture.
 
