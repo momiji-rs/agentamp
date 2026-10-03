@@ -86,9 +86,15 @@ impl Graphics {
     }
 }
 
-/// What the image query asks.
+/// What the image query asks. Kitty's shared memory is used where the
+/// terminal reads it back, so a cover is handed over in place instead of as
+/// base64; a terminal on another machine reads nothing and gets base64.
 fn query() -> QueryStdioOptions {
-    QueryStdioOptions { timeout_ms: QUERY_TIMEOUT_MS, ..QueryStdioOptions::default() }
+    #[cfg(not(windows))]
+    let kitty_shared_memory_object = QueryStdioOptions::probe_kitty_smo();
+    #[cfg(windows)]
+    let kitty_shared_memory_object = None;
+    QueryStdioOptions { timeout_ms: QUERY_TIMEOUT_MS, kitty_shared_memory_object, ..QueryStdioOptions::default() }
 }
 
 /// The cells a square picture covers at its largest in `area`, so the
@@ -140,10 +146,14 @@ mod tests {
     }
 
     #[test]
-    fn the_image_query_bounds_its_wait() {
+    fn the_image_query_bounds_its_wait_and_asks_for_shared_memory() {
         let options = query();
         assert_eq!(options.timeout_ms, QUERY_TIMEOUT_MS);
         assert!(options.timeout_ms < QueryStdioOptions::default().timeout_ms);
+        #[cfg(not(windows))]
+        assert!(options.kitty_shared_memory_object.is_some());
+        // Not asked for: compression trades start-up for bandwidth.
+        assert!(!options.kitty_compression);
     }
 
     #[test]
