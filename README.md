@@ -46,6 +46,9 @@ Start-up timing, the cost while playing, and what is left to gain:
 `Cargo.lock` keeps `vergen` at 9.0.6: librespot-core 0.8's build script does
 not compile against vergen 9.1.
 
+CI runs Clippy, with and without developer mode, and the tests on Linux and
+macOS for every push to `main` and every pull request.
+
 ## Use
 
 `agentamp` alone opens the window: your library, the queue and what is
