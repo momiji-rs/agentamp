@@ -15,14 +15,14 @@ use librespot_playback::audio_backend::{self, SinkError, SinkResult};
 use librespot_playback::config::{Bitrate, PlayerConfig};
 use librespot_playback::convert::Converter;
 use librespot_playback::decoder::AudioPacket;
-use librespot_playback::mixer::{self, Mixer, MixerConfig, NoOpVolume, VolumeGetter};
+use librespot_playback::mixer::NoOpVolume;
 use librespot_playback::player::{Player, PlayerEvent};
 use librespot_playback::{NUM_CHANNELS, SAMPLE_RATE};
 use rodio::buffer::SamplesBuffer;
 use log::info;
 use tokio::sync::Mutex;
 
-use crate::deck::{Deck, OnEnd, Output};
+use crate::deck::{Deck, OnEnd, Output, gain};
 use crate::model::{Source, Track};
 use crate::paths::Paths;
 use crate::tap::Tap;
@@ -153,10 +153,7 @@ pub fn cover(sizes: impl IntoIterator<Item = (i32, String)>) -> Option<String> {
 /// which the engine reads, so `load` does not keep `on_end`.
 pub struct SpotifyDeck {
     player: Arc<Player>,
-    /// librespot's software mixer, for its volume curve only: the speaker
-    /// applies the volume, after the tap.
-    mixer: Arc<dyn Mixer>,
-    curve: Box<dyn VolumeGetter + Send>,
+    /// Applies the volume, after the tap.
     speaker: Arc<rodio::Sink>,
     _output: Output,
     pub session: Session,
@@ -169,15 +166,13 @@ impl SpotifyDeck {
         volume: u8,
         tap: Arc<Tap>,
     ) -> Result<(Self, tokio::sync::mpsc::UnboundedReceiver<PlayerEvent>)> {
-        let mixer = mixer::find(None).context("no software mixer")?(MixerConfig::default())?;
         let output = Output::open()?;
         let speaker = Arc::new(rodio::Sink::connect_new(&output.mixer));
         let config = PlayerConfig { bitrate: Bitrate::Bitrate320, ..PlayerConfig::default() };
         let sink = Speaker { sink: speaker.clone(), tap };
         let player = Player::new(config, session.clone(), Box::new(NoOpVolume), move || Box::new(sink));
         let events = player.get_player_event_channel();
-        let curve = mixer.get_soft_volume();
-        let mut deck = Self { player, mixer, curve, speaker, _output: output, session, clock: Clock::default() };
+        let mut deck = Self { player, speaker, _output: output, session, clock: Clock::default() };
         deck.set_volume(volume);
         Ok((deck, events))
     }
@@ -229,8 +224,7 @@ impl Deck for SpotifyDeck {
     }
 
     fn set_volume(&mut self, percent: u8) {
-        self.mixer.set_volume((u32::from(percent.min(100)) * u32::from(u16::MAX) / 100) as u16);
-        self.speaker.set_volume(self.curve.attenuation_factor() as f32);
+        self.speaker.set_volume(gain(percent));
     }
 
     fn position_ms(&self) -> u32 {

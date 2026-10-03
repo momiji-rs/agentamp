@@ -91,6 +91,11 @@ after the terminal closes. It listens on a Unix socket in the runtime
 directory (`$XDG_RUNTIME_DIR/agentamp.sock`) that only your user can open.
 `now` and `queue` never start it. Its log is `~/.cache/agentamp/agentamp.log`.
 
+The volume goes from 0 to 100 on the same curve for Spotify, YouTube and
+files, logarithmic over 60 dB as librespot's is: 50 is 30 dB below full,
+and each step sounds the same size. It scales the sound before your system
+and your speaker turn it up or down.
+
 Spotify needs a Premium account. `agentamp login` opens Spotify's sign-in
 page in the browser and keeps librespot's reusable credential in
 `~/.config/agentamp/credentials.json`, in a directory only your user can

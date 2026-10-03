@@ -7,6 +7,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, anyhow};
+use librespot_playback::config::VolumeCtrl;
+use librespot_playback::mixer::mappings::MappedCtrl;
 use rodio::{Decoder, OutputStreamBuilder, Sink, mixer::Mixer};
 
 use crate::model::Track;
@@ -28,6 +30,14 @@ pub trait Deck: Send {
     fn release(&mut self) {
         self.stop();
     }
+}
+
+/// The factor the samples are multiplied by at `percent` of the volume, for
+/// every source alike: librespot's curve, logarithmic over 60 dB, so a step
+/// sounds the same size anywhere on the scale.
+pub fn gain(percent: u8) -> f32 {
+    let volume = u32::from(percent.min(100)) * u32::from(u16::MAX) / 100;
+    VolumeCtrl::default().to_mapped(volume as u16) as f32
 }
 
 /// Plays through the default output device with rodio.
@@ -72,7 +82,7 @@ impl Output {
 
 impl RodioDeck {
     pub fn new(volume: u8, tap: Arc<Tap>) -> Self {
-        Self { output: None, sink: None, volume: f32::from(volume) / 100.0, tap }
+        Self { output: None, sink: None, volume: gain(volume), tap }
     }
 
     /// Opens the device on first use.
@@ -127,7 +137,7 @@ impl Deck for RodioDeck {
     }
 
     fn set_volume(&mut self, percent: u8) {
-        self.volume = f32::from(percent) / 100.0;
+        self.volume = gain(percent);
         if let Some(sink) = &self.sink {
             sink.set_volume(self.volume);
         }
@@ -200,6 +210,32 @@ impl Deck for NullDeck {
         match (self.started, self.paused) {
             (Some(started), false) => self.offset_ms + started.elapsed().as_millis() as u32,
             _ => self.offset_ms,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use librespot_playback::mixer::{self, MixerConfig};
+
+    #[test]
+    fn the_volume_follows_the_ear() {
+        assert_eq!(gain(0), 0.0, "zero is silence");
+        assert_eq!(gain(100), 1.0, "full is the sound as decoded");
+        assert_eq!(gain(150), 1.0);
+        let db = |percent| 20.0 * gain(percent).log10();
+        assert!((db(50) + 30.0).abs() < 0.5, "half is 30 dB down, not 6: {}", db(50));
+        assert!((1..=100).all(|p| gain(p) > gain(p - 1)), "every step is louder");
+    }
+
+    #[test]
+    fn files_play_a_percentage_as_spotify_does() {
+        let spotify = mixer::find(None).unwrap()(MixerConfig::default()).unwrap();
+        let attenuation = spotify.get_soft_volume();
+        for percent in [1, 10, 35, 50, 80, 100] {
+            spotify.set_volume((u32::from(percent) * u32::from(u16::MAX) / 100) as u16);
+            assert_eq!(gain(percent), attenuation.attenuation_factor() as f32, "{percent}%");
         }
     }
 }
