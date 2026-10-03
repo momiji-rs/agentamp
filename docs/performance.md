@@ -97,6 +97,7 @@ Then:
   0.37 ms.
 - A terminal closed without a hang-up signal ends the window, instead of
   leaving it spinning at full CPU (crossterm-rs/crossterm#793).
+  `tests/hangup.rs` checks it on Linux, with and without the signal.
 - A terminal that never answers the image query now holds the first frame
   for 500 ms, not ratatui-image's default 2 s (2017 ms to 519 ms, in a
   pseudo-terminal that answers nothing). Every terminal answers the
