@@ -150,6 +150,8 @@ fn fake_yt_dlp(home: &Home) -> PathBuf {
 echo "$@" >> "{log}"
 for last; do :; done
 case "$last" in *missing*) echo "ERROR: [youtube] missing: Video unavailable" >&2; exit 1;; esac
+case "$last" in *refused*) echo "ERROR: unable to download video data: HTTP Error 403: Forbidden" >&2; exit 1;; esac
+case "$last" in *flaky*) [ -e "{log}.refused" ] || {{ touch "{log}.refused"; echo "ERROR: unable to download video data: HTTP Error 403: Forbidden" >&2; exit 1; }};; esac
 while [ "$1" != "-o" ]; do shift; done
 out=$(echo "$2" | sed 's/%(id)s/abc123/; s/%(ext)s/m4a/')
 cp "{audio}" "$out"
@@ -195,6 +197,17 @@ fn youtube_searches_download_into_the_cache() {
     let (ok, _, err) = run(&["add", "https://youtu.be/missing"]);
     assert!(!ok);
     assert!(err.contains("Video unavailable"), "{err}");
+    let tries = |url: &str| std::fs::read_to_string(home.0.join("yt-dlp.log")).unwrap().matches(url).count();
+    assert_eq!(tries("youtu.be/missing"), 1, "an unavailable video is not asked for again");
+
+    // YouTube refuses a download now and then and lets it through a moment later.
+    let (ok, _, err) = run(&["add", "https://youtu.be/flaky"]);
+    assert!(ok, "{err}");
+    assert_eq!(tries("youtu.be/flaky"), 2);
+    let (ok, _, err) = run(&["add", "https://youtu.be/refused"]);
+    assert!(!ok);
+    assert!(err.contains("HTTP Error 403"), "{err}");
+    assert_eq!(tries("youtu.be/refused"), 2, "asked again once, not forever");
 }
 
 #[test]

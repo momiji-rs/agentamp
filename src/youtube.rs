@@ -14,6 +14,7 @@ use crate::model::{Source, Track};
 /// symphonia decodes AAC in MP4 but not Opus, so only m4a audio will do.
 const FORMAT: &str = "bestaudio[ext=m4a]";
 const TIMEOUT: Duration = Duration::from_secs(120);
+const RETRY_AFTER: Duration = Duration::from_secs(1);
 
 #[derive(Deserialize)]
 struct Info {
@@ -36,19 +37,13 @@ fn program() -> PathBuf {
 /// Downloads `url` (a video link or `ytsearch1:` query) into `dir`.
 pub async fn fetch(url: &str, dir: &Path) -> Result<Track> {
     std::fs::create_dir_all(dir)?;
-    let output = Command::new(program())
-        .args(["--no-playlist", "--no-progress", "-f", FORMAT, "-o"])
-        .arg(dir.join("%(id)s.%(ext)s"))
-        .args(["--print", "after_move:%(.{id,title,uploader,duration,filepath,webpage_url})j", "--", url])
-        .kill_on_drop(true)
-        .output();
-    let output = match tokio::time::timeout(TIMEOUT, output).await {
-        Err(_) => bail!("yt-dlp took longer than {} seconds", TIMEOUT.as_secs()),
-        Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
-            bail!("YouTube needs yt-dlp; install it (pacman -S yt-dlp, brew install yt-dlp)")
-        }
-        Ok(result) => result.context("cannot run yt-dlp")?,
-    };
+    let mut output = download(url, dir).await?;
+    // YouTube refuses some requests for the audio and lets the same one
+    // through a moment later, so a refusal is asked again once.
+    if !output.status.success() && String::from_utf8_lossy(&output.stderr).contains("HTTP Error 403") {
+        tokio::time::sleep(RETRY_AFTER).await;
+        output = download(url, dir).await?;
+    }
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let reason = stderr.lines().rev().find(|l| l.contains("ERROR")).unwrap_or(stderr.trim());
@@ -57,6 +52,22 @@ pub async fn fetch(url: &str, dir: &Path) -> Result<Track> {
     let stdout = String::from_utf8_lossy(&output.stdout);
     let line = stdout.lines().rev().find(|l| l.starts_with('{')).context("yt-dlp found nothing")?;
     parse(line)
+}
+
+async fn download(url: &str, dir: &Path) -> Result<std::process::Output> {
+    let output = Command::new(program())
+        .args(["--no-playlist", "--no-progress", "-f", FORMAT, "-o"])
+        .arg(dir.join("%(id)s.%(ext)s"))
+        .args(["--print", "after_move:%(.{id,title,uploader,duration,filepath,webpage_url})j", "--", url])
+        .kill_on_drop(true)
+        .output();
+    match tokio::time::timeout(TIMEOUT, output).await {
+        Err(_) => bail!("yt-dlp took longer than {} seconds", TIMEOUT.as_secs()),
+        Ok(Err(e)) if e.kind() == std::io::ErrorKind::NotFound => {
+            bail!("YouTube needs yt-dlp; install it (pacman -S yt-dlp, brew install yt-dlp)")
+        }
+        Ok(result) => result.context("cannot run yt-dlp"),
+    }
 }
 
 fn parse(line: &str) -> Result<Track> {
