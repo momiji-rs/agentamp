@@ -54,8 +54,11 @@ impl Graphics {
     /// Draws the playing track's cover over the half blocks the view drew.
     pub fn draw(&mut self, frame: &mut Frame, view: &View) {
         let art = view.status.track.as_ref().and_then(|t| t.art.as_ref());
+        let font = self.picker.font_size();
         let areas = view::cover_areas(frame.area(), view);
-        self.shown.retain(|(shown, area, _)| Some(shown) == art && areas.iter().any(|(a, _)| a == area));
+        // Kept by the cells the picture covers, which are fewer than the
+        // area's when cells are not twice as tall as wide.
+        self.shown.retain(|(shown, area, _)| Some(shown) == art && areas.iter().any(|(a, _)| footprint(*a, font) == *area));
         let Some((art, image)) = art.and_then(|art| Some((art, self.images.get(art)?))) else { return };
         for (area, behind) in areas {
             // Scaled to fit, the picture leaves part of the area when cells
@@ -63,7 +66,7 @@ impl Graphics {
             // background, not half blocks.
             frame.render_widget(Clear, area);
             frame.render_widget(Block::new().style(Style::new().bg(behind)), area);
-            let area = footprint(area, self.picker.font_size());
+            let area = footprint(area, font);
             if !self.shown.iter().any(|(_, shown, _)| *shown == area) {
                 let start = std::time::Instant::now();
                 let fitted = self.picker.new_protocol(DynamicImage::ImageRgb8(image.clone()), area.into(), Resize::Scale(Some(FilterType::Triangle)));
@@ -94,7 +97,10 @@ mod tests {
     use crate::model::{Source, State, Track};
 
     fn kitty() -> Graphics {
-        let mut picker = Picker::halfblocks();
+        kitty_with(Picker::halfblocks())
+    }
+
+    fn kitty_with(mut picker: Picker) -> Graphics {
         picker.set_protocol_type(ProtocolType::Kitty);
         Graphics::with(picker).unwrap()
     }
@@ -109,7 +115,10 @@ mod tests {
     }
 
     fn symbols(graphics: &mut Graphics, view: &View) -> String {
-        let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+        draw(&mut Terminal::new(TestBackend::new(140, 40)).unwrap(), graphics, view)
+    }
+
+    fn draw(terminal: &mut Terminal<TestBackend>, graphics: &mut Graphics, view: &View) -> String {
         terminal
             .draw(|frame| {
                 view::draw(frame, view);
@@ -149,5 +158,22 @@ mod tests {
         let other = playing("https://i.scdn.co/image/b");
         symbols(&mut graphics, &other);
         assert!(graphics.shown.is_empty());
+    }
+
+    #[test]
+    // from_fontsize is the one way to give a picker a cell shape without
+    // asking a terminal, which a test has none of.
+    #[allow(deprecated)]
+    fn a_redraw_sends_the_cover_once_in_any_cell_shape() {
+        // Cells three times as tall as wide: the picture covers fewer rows
+        // than its area, and must still be found again.
+        let mut graphics = kitty_with(Picker::from_fontsize(FontSize::new(10, 30)));
+        let view = playing("https://i.scdn.co/image/a");
+        graphics.offer("https://i.scdn.co/image/a".into(), RgbImage::from_pixel(64, 64, image::Rgb([200, 40, 40])));
+        let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+        assert!(draw(&mut terminal, &mut graphics, &view).contains("\x1b_G"), "no kitty image");
+        // An encoding is sent once; a new one would be sent again.
+        assert!(!draw(&mut terminal, &mut graphics, &view).contains("\x1b_G"), "the cover was encoded again");
+        assert_eq!(graphics.shown.len(), 2);
     }
 }
