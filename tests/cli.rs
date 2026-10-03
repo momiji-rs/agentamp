@@ -213,6 +213,15 @@ fn youtube_searches_download_into_the_cache() {
     assert!(calls.contains("-f bestaudio[ext=m4a]"), "{calls}");
     assert!(calls.trim_end().ends_with("-- ytsearch1:night tempo"), "{calls}");
 
+    // The same search again finds the file without asking yt-dlp.
+    run(&["add", "yt:", "night", "tempo"]);
+    eventually("the search is remembered", &|| {
+        let (_, out, _) = run(&["--json", "queue"]);
+        out.matches("abc123.m4a").count() == 2
+    });
+    assert_eq!(tries("ytsearch1:night tempo"), 1);
+    run(&["clear"]);
+
     // Add answers at once too, and clearing the queue stops the download.
     let asked = std::time::Instant::now();
     let (ok, _, err) = run(&["add", "https://youtu.be/slow"]);

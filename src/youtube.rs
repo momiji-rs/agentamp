@@ -1,6 +1,6 @@
 //! YouTube audio through an installed yt-dlp. AgentAmp downloads the audio
-//! track once into its cache and plays the file, so a song heard again uses
-//! no network.
+//! track once into its cache and plays the file, and remembers what each
+//! link or search gave, so a song asked for again uses no network.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -49,8 +49,47 @@ pub fn pending(url: &str) -> Track {
     track
 }
 
-/// Downloads `url` (a video link or `ytsearch1:` query) into `dir`.
+/// Downloads `url` (a video link or `ytsearch1:` query) into `dir`, or
+/// finds it there from an earlier time.
 pub async fn fetch(url: &str, dir: &Path) -> Result<Track> {
+    if let Some(track) = recall(url, dir) {
+        return Ok(track);
+    }
+    let track = download_track(url, dir).await?;
+    if let Err(e) = remember(url, &track, dir) {
+        log::warn!("cannot remember what {url} found: {e:#}");
+    }
+    Ok(track)
+}
+
+/// What an earlier `fetch` of `url` gave, kept next to the files.
+#[derive(Serialize, Deserialize)]
+struct Remembered {
+    url: String,
+    track: Track,
+}
+
+fn remembered(url: &str, dir: &Path) -> PathBuf {
+    dir.join("found").join(format!("{:016x}.json", crate::tui::cover::hash(url)))
+}
+
+/// The track `url` gave before, while its file is still in the cache.
+fn recall(url: &str, dir: &Path) -> Option<Track> {
+    let kept: Remembered = serde_json::from_slice(&std::fs::read(remembered(url, dir)).ok()?).ok()?;
+    (kept.url == url && Path::new(&kept.track.uri).is_file()).then_some(kept.track)
+}
+
+/// Writes the whole record or nothing, so a cut-off one is never read.
+fn remember(url: &str, track: &Track, dir: &Path) -> Result<()> {
+    let file = remembered(url, dir);
+    std::fs::create_dir_all(file.parent().context("no directory")?)?;
+    let partial = file.with_extension("part");
+    std::fs::write(&partial, serde_json::to_vec(&Remembered { url: url.to_string(), track: track.clone() })?)?;
+    std::fs::rename(&partial, &file)?;
+    Ok(())
+}
+
+async fn download_track(url: &str, dir: &Path) -> Result<Track> {
     std::fs::create_dir_all(dir)?;
     let mut output = download(url, dir).await?;
     // YouTube refuses some requests for the audio and lets the same one
@@ -188,6 +227,24 @@ mod tests {
         assert_eq!(found(r#"{"id": "radio", "title": "24/7 radio", "live_status": "is_live"}"#), None);
         assert_eq!(found(r#"{"id": "soon", "title": "Premiere", "live_status": "is_upcoming"}"#), None);
         assert_eq!(found("not json"), None);
+    }
+
+    #[test]
+    fn a_link_or_search_is_remembered_while_its_file_is_kept() {
+        let dir = crate::testutil::scratch("youtube-remember");
+        let file = dir.join("abc.m4a");
+        std::fs::write(&file, b"audio").unwrap();
+        let mut track = Track::placeholder(Source::Youtube, file.to_string_lossy());
+        track.title = "City Pop Mix".into();
+        assert_eq!(recall("ytsearch1:night tempo", &dir), None);
+        remember("ytsearch1:night tempo", &track, &dir).unwrap();
+        assert_eq!(recall("ytsearch1:night tempo", &dir).unwrap().title, "City Pop Mix");
+        assert_eq!(recall("ytsearch1:night tempo remix", &dir), None);
+        // A record under the wrong name, as a hash collision would leave, is not trusted.
+        std::fs::copy(remembered("ytsearch1:night tempo", &dir), remembered("ytsearch1:other", &dir)).unwrap();
+        assert_eq!(recall("ytsearch1:other", &dir), None);
+        std::fs::remove_file(&file).unwrap();
+        assert_eq!(recall("ytsearch1:night tempo", &dir), None, "the file was cleared from the cache");
     }
 
     #[test]

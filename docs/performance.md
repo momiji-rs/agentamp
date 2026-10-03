@@ -28,7 +28,8 @@ cached, on a quiet machine (load below 6). Release build.
   fallen, the window takes 0% and Ghostty 0.4%.
 - `play` and `add` with a YouTube target answer in 2 to 3 ms (29 ms when
   the call starts the player) and download behind; before, they took 1.5 to
-  4.5 s. The sound itself still waits for yt-dlp, about 2.5 s (2026-10-03).
+  4.5 s. The sound itself waits for yt-dlp, about 2.5 s, the first time
+  only: a link or search asked for again is ready in 5 to 6 ms (2026-10-03).
 
 ## How to measure
 
@@ -66,14 +67,15 @@ Release build, `AGENTAMP_AUDIO=null`, a fresh `AGENTAMP_HOME`, yt-dlp
 | `add yt: …`, answered | 1,520 and 4,510 | 3 and 2 |
 | both added files ready, two at a time | | 2,533 after the second add |
 | `add` of a search already cached, answered | 1,250 | 3 |
-| …until ready (yt-dlp still searches) | 1,250 | 2,482 |
+| …until ready, yt-dlp searching again | 1,250 | 2,482 |
+| …until ready, remembering the search (three runs) | | 6, 5 and 6 |
 
 The before column came from other searches on an earlier run, so compare
 the answers, not the time to sound: that is yt-dlp's search and download,
-which vary from one run to the next, as the two before adds show. What changed is that nothing waits
-for it. A search already in the cache still costs a yt-dlp run; keeping
-what each search found would save it. The player held 12 MB resident
-afterwards.
+which vary from one run to the next, as the two before adds show. What
+changed is that nothing waits for it, and that a link or search asked for
+again skips yt-dlp: each one's answer is kept in `youtube/found/` next to
+the files. The player held 12 MB resident afterwards.
 
 ## What was fixed (2026-10-02)
 

@@ -3,7 +3,7 @@
 
 mod ansi;
 mod art;
-mod cover;
+pub mod cover;
 #[cfg(feature = "dev")]
 mod dev;
 mod graphics;
