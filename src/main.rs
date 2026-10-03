@@ -121,8 +121,8 @@ fn run(cli: Cli) -> Result<()> {
             println!("{}", if removed { "Signed out of Spotify." } else { "Not signed in." });
             return Ok(());
         }
-        Cmd::Play { target } => Request::Play { target: target.join(" ") },
-        Cmd::Add { target, next } => Request::Add { target: target.join(" "), next },
+        Cmd::Play { target } => Request::Play { target: here(&target.join(" ")) },
+        Cmd::Add { target, next } => Request::Add { target: here(&target.join(" ")), next },
         Cmd::Pause => Request::Pause,
         Cmd::Resume => Request::Resume,
         Cmd::Toggle => Request::Toggle,
@@ -163,6 +163,11 @@ fn run_daemon(paths: Paths) -> Result<()> {
 }
 
 /// Sends `request`, starting the daemon first when it is not running.
+/// A target relative to this process's directory, for the daemon.
+pub fn here(target: &str) -> String {
+    std::env::current_dir().map_or_else(|_| target.to_string(), |dir| target::from_dir(target, &dir))
+}
+
 fn send(paths: &Paths, request: &Request, autostart: bool) -> Result<Value> {
     let socket = paths.socket();
     match ipc::call(&socket, request) {

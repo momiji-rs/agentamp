@@ -87,6 +87,18 @@ pub fn parse(input: &str) -> Result<Target> {
     bail!("nothing to play at {input}: not a Spotify or YouTube link, and no such file")
 }
 
+/// The target as the daemon must hear it: a path relative to the asker's
+/// directory `from` made absolute, since the daemon runs in another one.
+/// Links, searches and anything that is no file here pass unchanged.
+pub fn from_dir(input: &str, from: &Path) -> String {
+    let trimmed = input.trim();
+    let path = Path::new(trimmed);
+    if !trimmed.is_empty() && path.is_relative() && !trimmed.starts_with('~') && from.join(path).exists() {
+        return from.join(path).to_string_lossy().into_owned();
+    }
+    input.to_string()
+}
+
 fn spotify(kind: &str, id: &str, input: &str) -> Result<Target> {
     let Some(kind_value) = SpotifyKind::parse(kind) else {
         bail!("AgentAmp plays Spotify tracks, albums and playlists, not this: {input}");
@@ -170,6 +182,21 @@ mod tests {
         assert_eq!(parse("https://youtu.be/dQw4w9WgXcQ").unwrap(), Target::Youtube("https://youtu.be/dQw4w9WgXcQ".into()));
         assert_eq!(parse("yt: city pop 1983 ").unwrap(), Target::Youtube("ytsearch1:city pop 1983".into()));
         assert!(parse("yt:").is_err());
+    }
+
+    #[test]
+    fn relative_paths_are_made_absolute_for_the_daemon() {
+        let dir = crate::testutil::scratch("relative_paths");
+        std::fs::create_dir_all(dir.join("album")).unwrap();
+        std::fs::write(dir.join("album/song.flac"), b"").unwrap();
+        let absolute = dir.join("album/song.flac").to_string_lossy().into_owned();
+        assert_eq!(from_dir("album/song.flac", &dir), absolute);
+        assert_eq!(from_dir(&absolute, Path::new("/")), absolute);
+        assert_eq!(from_dir("album", &dir), dir.join("album").to_string_lossy());
+        // Not files here: the daemon reads them as they are.
+        for target in ["", " ", "yt:album", "spotify:track:6rqhFgbbKwnb9MLmUQDhG6", "https://youtu.be/x", "~/Music", "no-such-file.mp3"] {
+            assert_eq!(from_dir(target, &dir), target);
+        }
     }
 
     #[test]

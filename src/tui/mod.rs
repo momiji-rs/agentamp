@@ -309,7 +309,7 @@ impl View {
                 KeyCode::Esc => self.prompt = None,
                 KeyCode::Enter => {
                     let prompt = self.prompt.take()?;
-                    let target = prompt.text.trim().to_string();
+                    let target = crate::here(prompt.text.trim());
                     if target.is_empty() {
                         return None;
                     }
