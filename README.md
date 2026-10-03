@@ -14,6 +14,14 @@ built to be driven by agents as much as by hands.
 
 AgentAmp is an early proof of concept.
 
+![AgentAmp's window: the library, the queue, what is playing and the player bar](docs/images/window.png)
+
+![The Play prompt, taking a link, a yt: search or a path](docs/images/prompt.png)
+
+Both are the tests' demo frames, rendered by `scripts/screens.sh` with
+[termshot](https://github.com/momiji-rs/termshot). Covers are drawn in half
+blocks there; kitty, Ghostty, foot, WezTerm and iTerm2 show the picture.
+
 ## Development
 
 ```sh
