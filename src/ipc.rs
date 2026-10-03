@@ -35,6 +35,9 @@ pub enum Request {
     Seek { position_ms: u32 },
     /// Search Spotify for up to `count` tracks, albums, playlists and artists.
     SearchSpotify { query: String, count: u8 },
+    /// A Spotify artist, album, playlist or folder, or a part of the
+    /// library, with `count` of its paged items from `offset`.
+    Browse { target: String, offset: u32, count: u8 },
     Shutdown,
     /// Stream the sound as it plays, for drawing it: after the answer the
     /// connection carries `tap` chunks, not JSON.

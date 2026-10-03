@@ -137,8 +137,8 @@ fn clients_with_the_handshake_get_every_tool() {
     assert_eq!(
         names,
         [
-            "add", "clear_queue", "next", "now_playing", "pause", "play", "previous", "queue", "resume",
-            "search_spotify", "search_youtube", "seek", "set_volume", "stop"
+            "add", "browse", "clear_queue", "next", "now_playing", "pause", "play", "previous", "queue",
+            "resume", "search_spotify", "search_youtube", "seek", "set_volume", "stop"
         ]
     );
     for tool in &tools {
@@ -157,6 +157,9 @@ fn clients_with_the_handshake_get_every_tool() {
     assert_eq!(tool("search_youtube")["annotations"]["readOnlyHint"], true);
     assert_eq!(tool("search_spotify")["annotations"]["readOnlyHint"], true);
     assert_eq!(tool("search_spotify")["inputSchema"]["required"], json!(["query"]));
+    assert_eq!(tool("browse")["annotations"]["readOnlyHint"], true);
+    assert_eq!(tool("browse")["inputSchema"]["required"], json!(["target"]));
+    assert_eq!(tool("browse")["inputSchema"]["properties"]["count"]["maximum"], 50);
     assert_eq!(tool("search_youtube")["inputSchema"]["required"], json!(["query"]));
     assert_eq!(tool("play")["annotations"]["destructiveHint"], true);
     assert_eq!(tool("play")["inputSchema"]["required"], json!(["target"]));
@@ -271,6 +274,17 @@ echo '{{"id": "ls2JK6x6ycs", "title": "Plastic Love 1984", "channel": "SOULCITYW
         (json!({"query": "plastic love"}), "agentamp login"),
     ] {
         let answer = server.call("search_spotify", arguments);
+        assert_eq!(answer["isError"], true, "{answer}");
+        assert!(answer["content"][0]["text"].as_str().unwrap().contains(says), "{answer}");
+    }
+    for (arguments, says) in [
+        (json!({"target": " "}), "what to browse"),
+        (json!({"target": "top", "count": 51}), "1 to 50"),
+        (json!({"target": "the attic"}), "browse takes a Spotify artist"),
+        (json!({"target": "spotify:track:4uLU6hMCjMI75M1A2tKUQC"}), "nothing to browse"),
+        (json!({"target": "playlists"}), "agentamp login"),
+    ] {
+        let answer = server.call("browse", arguments);
         assert_eq!(answer["isError"], true, "{answer}");
         assert!(answer["content"][0]["text"].as_str().unwrap().contains(says), "{answer}");
     }

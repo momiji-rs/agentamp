@@ -132,7 +132,8 @@ pub fn artist(data: &Value) -> Option<Hit> {
 
 impl Hit {
     pub fn new(target: &str) -> Self {
-        Hit { title: String::new(), artist: String::new(), album: None, year: None, duration_ms: None, target: target.to_string() }
+        let target = target.to_string();
+        Hit { title: String::new(), artist: String::new(), album: None, year: None, duration_ms: None, target }
     }
 }
 

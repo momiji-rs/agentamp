@@ -137,6 +137,10 @@ fn spotify_asks_for_a_sign_in_first() {
     assert!(err.contains("agentamp login"), "{err}");
     let (ok, _, err) = home.run(&["search", "x", "--count", "11"]);
     assert!(!ok && err.contains("1..=10"), "{err}");
+    let (ok, _, err) = home.run(&["browse", "https://open.spotify.com/artist/3WwGRA2o4Ux1RRMYaYDh7N"]);
+    assert!(!ok && err.contains("agentamp login"), "{err}");
+    let (ok, _, err) = home.run(&["browse", "top", "--count", "51"]);
+    assert!(!ok && err.contains("1..=50"), "{err}");
     let (ok, out, _) = home.run(&["logout"]);
     assert!(ok);
     assert_eq!(out.trim(), "Not signed in.");

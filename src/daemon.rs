@@ -14,6 +14,7 @@ use tokio::sync::{mpsc, oneshot};
 use crate::deck::{Deck, NullDeck, RodioDeck};
 use crate::engine::{Engine, Fetch, Mode, Msg};
 use crate::ipc::{Request, Response};
+use crate::browse;
 use crate::paths::Paths;
 use crate::resolve;
 use crate::spotify::Spotify;
@@ -163,6 +164,18 @@ async fn handle(
                 Ok(found) => Response::ok(found),
                 Err(e) => {
                     warn!("cannot search Spotify for {query}: {e:#}");
+                    Response::error(e)
+                }
+            };
+        }
+        Request::Browse { target, .. } if target.trim().is_empty() => {
+            return Response::error("say what to browse");
+        }
+        Request::Browse { target, offset, count } => {
+            return match browse::browse(spotify, &target, offset, count).await {
+                Ok(page) => Response::ok(page),
+                Err(e) => {
+                    warn!("cannot browse {target}: {e:#}");
                     Response::error(e)
                 }
             };

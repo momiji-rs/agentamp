@@ -194,7 +194,7 @@ impl Engine {
             Request::Status | Request::Shutdown => {}
             Request::Play { .. } | Request::Add { .. } => bail!("play and add are resolved first"),
             Request::Listen => bail!("listening is answered by the connection"),
-            Request::SearchSpotify { .. } => bail!("a search is answered by the daemon"),
+            Request::SearchSpotify { .. } | Request::Browse { .. } => bail!("Spotify's pages are answered by the daemon"),
         }
         Ok(serde_json::to_value(self.status())?)
     }

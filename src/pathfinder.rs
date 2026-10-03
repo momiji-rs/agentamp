@@ -53,7 +53,8 @@ struct Hashes {
 
 impl Pathfinder {
     pub fn new(file: PathBuf) -> Self {
-        let mut known: HashMap<String, String> = QUERIES.iter().map(|(op, hash, _)| (op.to_string(), hash.to_string())).collect();
+        let mut known: HashMap<String, String> =
+            QUERIES.iter().map(|(op, hash, _)| (op.to_string(), hash.to_string())).collect();
         let kept: HashMap<String, String> =
             std::fs::read(&file).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default();
         known.extend(kept.into_iter().filter(|(op, hash)| QUERIES.iter().any(|q| q.0 == op) && is_hash(hash)));

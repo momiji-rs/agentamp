@@ -22,6 +22,8 @@ const INSTRUCTIONS: &str = "AgentAmp plays Spotify (Premium, after `agentamp log
 through a background player that keeps going between calls. `play` replaces the queue, `add` extends it, \
 `now_playing` and `queue` say what is on without changing it. `search_spotify` lists tracks, albums, \
 playlists and artists, `search_youtube` lists videos; pass a result's `target` to `play` or `add`. \
+`browse` opens a Spotify artist, album, playlist or folder, or the library's playlists, albums and artists, \
+the Liked Songs and the top artists and tracks; its items' targets play or browse further. \
 A YouTube track answers at once with `downloading: true` and plays when its file is here; one that fails \
 leaves the queue and `now_playing` gives the error.";
 
@@ -87,8 +89,28 @@ struct SpotifySearch {
     count: u8,
 }
 
+#[derive(Deserialize, JsonSchema)]
+#[schemars(transform = plain_integers)]
+struct Browse {
+    /// A Spotify artist, album or playlist link or `spotify:` URI, a folder's `spotify:user:…:folder:…`
+    /// URI, or one of `playlists`, `albums` and `artists` (the library's), `liked` or `top`.
+    target: String,
+    /// Skip this many of the paged items: an artist's releases, an album's or playlist's tracks,
+    /// the library's lists, Liked Songs, the top artists and tracks.
+    #[serde(default)]
+    offset: u32,
+    /// How many of them, 1 to 50.
+    #[serde(default = "twenty")]
+    #[schemars(range(min = 1, max = 50))]
+    count: u8,
+}
+
 fn five() -> u8 {
     5
+}
+
+fn twenty() -> u8 {
+    20
 }
 
 #[derive(Serialize, Deserialize, JsonSchema)]
@@ -213,6 +235,25 @@ impl Player {
             return Err(format!("a search lists 1 to {} of each kind, not {count}", crate::spotify_search::MOST));
         }
         self.ask(Request::SearchSpotify { query, count }).await
+    }
+
+    /// Open a Spotify page without playing it: an artist's popular tracks, releases, playlists and
+    /// related artists, an album's or a playlist's tracks, a folder's playlists, the library's playlists,
+    /// albums or artists, the Liked Songs, or this month's top artists and tracks. Each section says how
+    /// many it has in all; `offset` and `count` page on. Needs the Spotify sign-in, and starts the
+    /// background player, which holds it.
+    #[tool(annotations(title = "Browse Spotify", read_only_hint = true, open_world_hint = true))]
+    async fn browse(
+        &self,
+        Parameters(Browse { target, offset, count }): Parameters<Browse>,
+    ) -> Result<Json<crate::browse::Page>, String> {
+        if target.trim().is_empty() {
+            return Err("say what to browse".into());
+        }
+        if !(1..=crate::browse::MOST).contains(&count) {
+            return Err(format!("a page lists 1 to {} items, not {count}", crate::browse::MOST));
+        }
+        self.ask(Request::Browse { target, offset, count }).await
     }
 
     /// Search YouTube for videos to play, without downloading or playing any. Live streams are left out.

@@ -1,3 +1,4 @@
+mod browse;
 mod daemon;
 mod deck;
 mod engine;
@@ -68,6 +69,17 @@ enum Cmd {
         query: Vec<String>,
         /// How many of each kind, 1 to 10.
         #[arg(long, default_value_t = 5, value_parser = clap::value_parser!(u8).range(1..=10))]
+        count: u8,
+    },
+    /// Browse Spotify: an artist, album, playlist or folder (a URI or a
+    /// link), or `playlists`, `albums`, `artists`, `liked` or `top`.
+    Browse {
+        target: Vec<String>,
+        /// Skip this many of the page's paged items.
+        #[arg(long, default_value_t = 0)]
+        offset: u32,
+        /// How many of them, 1 to 50.
+        #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u8).range(1..=50))]
         count: u8,
     },
     /// What is playing.
@@ -145,6 +157,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Stop => Request::Stop,
         Cmd::Clear => Request::Clear,
         Cmd::Search { query, count } => Request::SearchSpotify { query: query.join(" "), count },
+        Cmd::Browse { target, offset, count } => Request::Browse { target: target.join(" "), offset, count },
         Cmd::Now => Request::Status,
         Cmd::Queue => Request::Queue,
         Cmd::Volume { percent } => Request::Volume { percent },
@@ -272,6 +285,7 @@ fn describe(request: &Request, data: &Value) -> Option<String> {
         }
         Request::Play { .. } => status_line(&data["status"]),
         Request::SearchSpotify { .. } => serde_json::from_value(data.clone()).ok().map(|f| found(&f)),
+        Request::Browse { .. } => serde_json::from_value(data.clone()).ok().map(|p| page(&p)),
         _ => status_line(data),
     }
 }
@@ -285,14 +299,32 @@ fn found(found: &spotify_search::Found) -> String {
             continue;
         }
         lines.push(kind.to_string());
-        lines.extend(hits.iter().map(|h| {
-            let by = if h.artist.is_empty() { String::new() } else { format!(" · {}", h.artist) };
-            let year = h.year.map_or(String::new(), |y| format!(" ({y})"));
-            let length = h.duration_ms.filter(|ms| *ms > 0).map_or(String::new(), |ms| format!("  {}", clock(ms)));
-            format!("  {}{by}{year}{length}  {}", h.title, h.target)
-        }));
+        lines.extend(hits.iter().map(hit_line));
     }
     if lines.is_empty() { "Nothing found".into() } else { lines.join("\n") }
+}
+
+/// A Spotify page: its title, then each section with how many it has in
+/// all when that is more than it lists.
+fn page(page: &browse::Page) -> String {
+    let mut lines = vec![if page.by.is_empty() { page.title.clone() } else { format!("{} · {}", page.title, page.by) }];
+    for section in &page.sections {
+        let more = section.total as usize > section.items.len();
+        lines.push(if more { format!("{} ({} in all)", section.name, section.total) } else { section.name.clone() });
+        lines.extend(section.items.iter().map(hit_line));
+        if section.items.is_empty() {
+            lines.push("  none here".into());
+        }
+    }
+    lines.join("\n")
+}
+
+/// One result, ending with the target to play or browse.
+fn hit_line(h: &spotify_search::Hit) -> String {
+    let by = if h.artist.is_empty() { String::new() } else { format!(" · {}", h.artist) };
+    let year = h.year.map_or(String::new(), |y| format!(" ({y})"));
+    let length = h.duration_ms.filter(|ms| *ms > 0).map_or(String::new(), |ms| format!("  {}", clock(ms)));
+    format!("  {}{by}{year}{length}  {}", h.title, h.target)
 }
 
 fn status_line(data: &Value) -> Option<String> {
@@ -308,6 +340,27 @@ mod tests {
         assert_eq!(parse_position("90").unwrap(), 90_000);
         assert_eq!(parse_position("1:30").unwrap(), 90_000);
         assert!(parse_position("x").is_err());
+    }
+
+    #[test]
+    fn a_page_says_how_many_a_section_has_in_all() {
+        use spotify_search::Hit;
+        let page = browse::Page {
+            title: "Expressions".into(),
+            by: "Mariya Takeuchi".into(),
+            sections: vec![
+                browse::Section {
+                    name: "Tracks".into(),
+                    total: 32,
+                    items: vec![Hit { title: "Plastic Love".into(), duration_ms: Some(294493), ..Hit::new("spotify:track:7rU6Iebxzlvqy5t857bKFq") }],
+                },
+                browse::Section { name: "Releases".into(), total: 0, items: vec![] },
+            ],
+        };
+        assert_eq!(
+            super::page(&page),
+            "Expressions · Mariya Takeuchi\nTracks (32 in all)\n  Plastic Love  4:54  spotify:track:7rU6Iebxzlvqy5t857bKFq\nReleases\n  none here"
+        );
     }
 }
 
