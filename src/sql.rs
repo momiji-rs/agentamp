@@ -23,17 +23,18 @@ type About = (&'static str, &'static str, &'static [(&'static str, &'static str)
 
 /// What each table and column holds, beyond its name and type.
 const ABOUT: &[About] = &[
-    ("plays", "Each track heard, written when the next takes its place or the player stops.", &[
+    ("plays", "Each track heard: in AgentAmp, written when the next takes its place or the player stops, and in \
+                Spotify's apps, from its streaming history (`agentamp import`).", &[
         ("id", "The row's own number."),
-        ("started_at", "When it started, UTC: 2026-10-01T19:55:02Z."),
+        ("started_at", "When it started, UTC: 2026-10-01T19:55:02Z. From the streaming history, its end less the time heard."),
         ("ms_played", "How long it was heard, pauses left out."),
         ("uri", "Its Spotify URI, YouTube link or file path."),
         ("source", "spotify, youtube or local."),
         ("title", ""),
         ("artist", "Its artists, comma-separated."),
         ("album", ""),
-        ("duration_ms", "Its length; 0 when unknown."),
-        ("origin", "What recorded the play: agentamp."),
+        ("duration_ms", "Its length; 0 when unknown, as for every play from the streaming history."),
+        ("origin", "What recorded the play: agentamp, or spotify for Spotify's streaming history."),
     ]),
     ("liked", "The Spotify Liked Songs as of the last `agentamp sync`.", &[
         ("uri", "Its spotify:track: URI."),

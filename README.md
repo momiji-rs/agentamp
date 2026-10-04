@@ -95,6 +95,7 @@ agentamp --json now                # the same, for scripts and agents
 agentamp pause | resume | toggle | next | prev | stop | clear
 agentamp queue
 agentamp sync                      # your Liked Songs and their albums, into the database
+agentamp import ~/Downloads/my_spotify_data   # your years of plays, from Spotify's export
 agentamp sql "SELECT artist, count(*) FROM plays GROUP BY 1 ORDER BY 2 DESC LIMIT 10"
 agentamp sql --schema              # what each table and column holds
 agentamp seek 1:30
@@ -123,6 +124,19 @@ their albums' title, artists, release date (`2014-09-26`, or `2014-09` or
 now and says how many are new and gone; it reads only the albums it has
 not kept yet, 500 to a request. Ten thousand songs take about 5 seconds.
 Spotify gives no genres, so there are none.
+
+`agentamp import` adds the years of plays Spotify keeps. Ask for them on
+Spotify's Privacy page, under "Download your data": the Extended streaming
+history, which Spotify sends within 30 days as a zip. Unzip it and give
+`agentamp import` the folder (or its `Streaming_History_Audio_*.json`
+files). Each song heard becomes a row of `plays` with `origin` `spotify`:
+its start (when it stopped, less the time heard), time heard, URI, title,
+artist and album; its length is 0, as the export does not say. Podcasts,
+audiobooks and videos are left out, and so are the IP address, country and
+device each play came from. Importing again adds only what is new, and a
+play AgentAmp kept itself, within a minute, is not counted twice. The
+account data's shorter history (`StreamingHistory_music_*.json`) does
+not say which song each play was, so it is refused.
 
 `agentamp sql` asks the database a question in SQL and prints the answer
 as a table (`--json` for its columns and rows), reading the question from

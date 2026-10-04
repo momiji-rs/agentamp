@@ -8,6 +8,7 @@ mod daemon;
 pub mod db;
 mod deck;
 mod engine;
+mod history;
 #[doc(hidden)]
 pub mod ipc;
 mod library;
@@ -96,6 +97,13 @@ enum Cmd {
     /// Copy your Spotify Liked Songs, with when each was liked, and their
     /// albums' release dates into the library's database.
     Sync,
+    /// Add the years of plays in Spotify's Extended streaming history (the
+    /// unzipped folder, or its Streaming_History_Audio files) to the
+    /// library's database. Importing again adds only what is new.
+    Import {
+        #[arg(required = true)]
+        paths: Vec<std::path::PathBuf>,
+    },
     /// Ask the library's database in SQL: what has played, the Liked Songs
     /// and their albums. Read only; the question comes from stdin when it is
     /// not given.
@@ -169,6 +177,11 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Logout => {
             let removed = spotify::logout(&paths)?;
             println!("{}", if removed { "Signed out of Spotify." } else { "Not signed in." });
+            return Ok(());
+        }
+        Cmd::Import { paths: targets } => {
+            let imported = history::import(&paths.database(), &targets)?;
+            println!("{}", if cli.json { serde_json::to_string(&imported)? } else { imported_text(&imported) });
             return Ok(());
         }
         Cmd::Sql { query, schema } => return ask_library(&paths, query, schema, cli.json),
@@ -372,6 +385,19 @@ fn synced(s: &sync::Synced) -> String {
     }
     if s.albums_failed > 0 {
         text += &format!(", {} not given (the next sync asks again)", s.albums_failed);
+    }
+    text
+}
+
+fn imported_text(i: &history::Imported) -> String {
+    let span = match (&i.from, &i.to) {
+        (Some(from), Some(to)) => format!(" from {} to {}", from.get(..10).unwrap_or(from), to.get(..10).unwrap_or(to)),
+        _ => String::new(),
+    };
+    let files = if i.files == 1 { "file" } else { "files" };
+    let mut text = format!("{} songs heard{span} in {} {files}: {} added, {} already kept", i.songs, i.files, i.added, i.songs - i.added);
+    if i.others > 0 {
+        text += &format!("; {} podcast episodes and audiobook chapters left out", i.others);
     }
     text
 }

@@ -1,7 +1,9 @@
 //! The library's database: what has played and what the Spotify library
 //! holds, kept in SQLite so the CLI and agents can ask it anything in SQL.
-//! The daemon is its only writer: plays on a thread of its own so the
-//! player never waits for the disk, the library when it is synced.
+//! The daemon writes it: plays on a thread of its own so the player never
+//! waits for the disk, the library when it is synced. `agentamp import`
+//! writes the streaming history from its own process; SQLite's lock keeps
+//! the two apart.
 
 use std::collections::HashSet;
 use std::os::unix::fs::PermissionsExt;
@@ -53,6 +55,11 @@ const MIGRATIONS: &[&str] = &["
         label TEXT,
         kind TEXT
     );
+", "
+    CREATE UNIQUE INDEX plays_once ON plays (started_at, uri, ms_played) WHERE origin = 'spotify';
+    -- A song's plays in time order, for an import to find AgentAmp's own near one.
+    CREATE INDEX plays_by_uri_time ON plays (uri, started_at);
+    DROP INDEX plays_by_uri;
 "];
 
 /// One listen to a track, written once it ends.
@@ -89,6 +96,21 @@ pub struct Album {
     /// `ALBUM`, `SINGLE`, `EP` or `COMPILATION`.
     pub kind: Option<String>,
 }
+
+/// A song heard, as Spotify's streaming history gives it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Streamed {
+    /// When it stopped playing, UTC: `2019-03-10T12:34:56Z`.
+    pub ended_at: String,
+    pub ms_played: u32,
+    pub uri: String,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+}
+
+/// An AgentAmp play this close to a Spotify one of the same song is the same play.
+const SAME_PLAY_S: i64 = 60;
 
 /// Opens the database to write, making it and bringing it up to date.
 pub fn open(path: &Path) -> Result<Connection> {
@@ -150,6 +172,32 @@ pub fn insert(db: &Connection, play: &Play) -> Result<()> {
         params![started, play.ms_played, uri, source, track.title, track.artist, track.album, track.duration_ms],
     )?;
     Ok(())
+}
+
+/// Adds Spotify's streaming history to the plays, in one transaction, as
+/// `origin` `spotify`: a play it already holds, from an import before or
+/// heard in AgentAmp, is not added again. Gives how many were added.
+pub fn import(db: &mut Connection, heard: &[Streamed]) -> Result<usize> {
+    // Years of plays touch every page of the indexes: hold them in memory, not 2 MB of them.
+    db.pragma_update(None, "cache_size", -64 * 1024)?;
+    let tx = db.transaction()?;
+    let mut added = 0;
+    {
+        let mut insert = tx.prepare(
+            "INSERT OR IGNORE INTO plays (started_at, ms_played, uri, source, title, artist, album, origin)
+             SELECT strftime('%Y-%m-%dT%H:%M:%SZ', start, 'unixepoch'), ?2, ?3, 'spotify', ?4, ?5, ?6, 'spotify'
+             FROM (SELECT unixepoch(?1) - ?2 / 1000 AS start)
+             WHERE start IS NOT NULL AND NOT EXISTS (
+                 SELECT 1 FROM plays WHERE uri = ?3 AND origin = 'agentamp' AND started_at
+                 BETWEEN strftime('%Y-%m-%dT%H:%M:%SZ', start - ?7, 'unixepoch')
+                 AND strftime('%Y-%m-%dT%H:%M:%SZ', start + ?7, 'unixepoch'))",
+        )?;
+        for h in heard {
+            added += insert.execute(params![h.ended_at, h.ms_played, h.uri, h.title, h.artist, h.album, SAME_PLAY_S])?;
+        }
+    }
+    tx.commit()?;
+    Ok(added)
 }
 
 /// Makes the `liked` table hold `songs`, in one transaction. Gives how

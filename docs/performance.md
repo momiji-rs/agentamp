@@ -39,6 +39,9 @@ cached, on a quiet machine (load below 6). Release build.
   the log's size. See below.
 - `agentamp sync` of 9 688 Liked Songs and their 1 130 albums takes 5.8 s
   into an empty database and 4.2 s again, in 13 requests (2026-10-04).
+- `agentamp import` of 150 000 plays of streaming history (10 files,
+  81 MB) takes 3.3 s and 110 MB at most, and 0.8 s again, when it adds
+  nothing (release build, load about 20, 2026-10-04).
 - `agentamp sql`, a new process each time, answers in 12 ms for
   `SELECT 1`, about 26 ms for a count or the top artists of 10 000 Liked
   Songs, and 52 to 133 ms for a question over 100 000 plays (release
@@ -174,6 +177,28 @@ session's build).
   debug build (`tests/scaling.rs`).
 - Of the albums, 1 044 are dated to the day, 2 to the month, 84 to the
   year only.
+
+## Importing the streaming history (2026-10-04)
+
+150 000 plays of 10 000 songs, a few songs holding most of them (the
+most played has 6 915), in 10 files of 15 000 as Spotify splits them:
+81 MB of JSON, made up in the export's shape. Release build, load about
+20 to 27 (another session's build).
+
+| | first import | again, nothing new |
+|---|---|---|
+| a play AgentAmp kept, found by the song's index, then its times read | 64.8 s | 101.4 s |
+| found by the song and time index, ±60 s | 5.9 s | 0.8 s |
+| and SQLite's page cache at 64 MB, not 2 MB | **3.3 s** | **0.8 s** |
+
+- The first way read every play of the song to compare times, so a
+  song played 6 915 times was read 6 915 times over. `plays_by_uri_time`
+  (`uri, started_at`) replaces `plays_by_uri` and reads only the two
+  minutes around the play.
+- Writing 150 000 rows touches every page of four indexes; with 2 MB of
+  cache they were read back from the disk again and again.
+- At most 110 MB resident: one file's JSON at a time, and the plays.
+- `tests/scaling.rs` keeps it linear: 10 000 plays in 0.15 s, debug.
 
 ## Asking the library in SQL (2026-10-04)
 

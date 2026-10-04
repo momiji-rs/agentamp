@@ -19,7 +19,7 @@ use agentamp::model::Track;
 use agentamp::queue::Queue;
 use serde_json::Value;
 
-use common::{liked, plays, scratch, tracks};
+use common::{liked, plays, scratch, streamed, tracks};
 
 const SMALL: usize = 1_000;
 const LARGE: usize = 10_000;
@@ -217,7 +217,31 @@ const CASES: &[Case] = &[
             })
         },
     },
+    Case {
+        name: "an import of the streaming history",
+        growth: Growth::Linear,
+        budget: ms(1_000),
+        time: |n| {
+            let heard = streamed(n, 4);
+            let path = scratch(&format!("scaling-import-{n}")).join("library.db");
+            least(
+                || {
+                    let _ = std::fs::remove_file(&path);
+                    let _ = std::fs::remove_file(path.with_extension("db-wal"));
+                    db::open(&path).unwrap()
+                },
+                |conn| assert_eq!(db::import(conn, &heard).unwrap(), heard.len(), "every play is new"),
+            )
+        },
+    },
 ];
+
+#[test]
+fn times_are_written_as_spotify_writes_them() {
+    assert_eq!(common::iso(0), "1970-01-01T00:00:00Z");
+    assert_eq!(common::iso(1_790_000_000), "2026-09-21T14:13:20Z");
+    assert_eq!(common::iso(951_825_599), "2000-02-29T11:59:59Z");
+}
 
 #[test]
 fn nothing_grows_faster_than_it_should() {
