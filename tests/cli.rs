@@ -79,6 +79,15 @@ fn nothing_runs_until_asked() {
 }
 
 #[test]
+fn quit_is_answered_and_the_next_command_starts_a_new_player() {
+    let home = Home::new("cli_quit");
+    for _ in 0..20 {
+        assert_eq!(home.json(&["volume", "50"])["volume"], 50);
+        home.ok(&["quit"]);
+    }
+}
+
+#[test]
 fn a_long_queue_is_listed_whole() {
     let home = Home::new("long_queue");
     let music = home.0.join("music");

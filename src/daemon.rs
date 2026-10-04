@@ -9,7 +9,7 @@ use log::{info, warn};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::unix::OwnedWriteHalf;
 use tokio::net::{UnixListener, UnixStream};
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot, watch};
 
 use crate::deck::{Deck, NullDeck, RodioDeck};
 use crate::engine::{Engine, Fetch, Mode, Msg};
@@ -28,6 +28,17 @@ pub const DEFAULT_VOLUME: u8 = 80;
 const LISTEN_TICK: std::time::Duration = std::time::Duration::from_millis(8);
 /// Ticks without sound between the chunks of none that check the window is there.
 const HEARTBEAT: u32 = 125;
+
+/// The longest `quit` waits on either side.
+const QUIT_WAIT: std::time::Duration = std::time::Duration::from_secs(1);
+/// How `quit` is answered: only once the socket is gone, so that a command
+/// after it starts a new player instead of reaching this one, and before the
+/// process ends, so that the caller reads the answer.
+#[derive(Default)]
+struct Closing {
+    gone: watch::Sender<bool>,
+    answered: Notify,
+}
 
 pub async fn run(paths: Paths) -> Result<()> {
     let socket = paths.socket();
@@ -52,20 +63,34 @@ pub async fn run(paths: Paths) -> Result<()> {
     let engine = tokio::spawn(engine.run(rx));
 
     let database = Arc::new(paths.database());
+    let closing = Arc::new(Closing::default());
     let accept = async {
         loop {
             let (stream, _) = listener.accept().await?;
-            tokio::spawn(serve(stream, tx.clone(), spotify.clone(), tap.clone(), database.clone()));
+            tokio::spawn(serve(stream, tx.clone(), spotify.clone(), tap.clone(), database.clone(), closing.clone()));
         }
         #[allow(unreachable_code)]
         Ok::<(), std::io::Error>(())
     };
-    tokio::select! {
-        result = accept => result?,
-        _ = engine => info!("shutting down"),
-        _ = tokio::signal::ctrl_c() => info!("interrupted"),
-    }
+    let quit = tokio::select! {
+        result = accept => {
+            result?;
+            false
+        }
+        _ = engine => true,
+        _ = tokio::signal::ctrl_c() => {
+            info!("interrupted");
+            false
+        }
+    };
+    // The file first: a new player could bind the path once the listener is gone.
     let _ = std::fs::remove_file(&socket);
+    drop(listener);
+    if quit {
+        info!("shutting down");
+        closing.gone.send_replace(true);
+        let _ = tokio::time::timeout(QUIT_WAIT, closing.answered.notified()).await;
+    }
     Ok(())
 }
 
@@ -91,18 +116,31 @@ async fn serve(
     spotify: Arc<Spotify>,
     tap: Arc<Tap>,
     database: Arc<PathBuf>,
+    closing: Arc<Closing>,
 ) {
     let (read, mut write) = stream.into_split();
     let mut lines = BufReader::new(read).lines();
     while let Ok(Some(line)) = lines.next_line().await {
+        let mut shutdown = false;
         let response = match serde_json::from_str::<Request>(&line) {
             Ok(Request::Listen) => return listen(write, &tap).await,
-            Ok(request) => handle(request, &tx, &spotify, &database).await,
+            Ok(request) => {
+                shutdown = request == Request::Shutdown;
+                handle(request, &tx, &spotify, &database).await
+            }
             Err(e) => Response::error(format!("not a request: {e}")),
         };
         let mut out = serde_json::to_string(&response).unwrap_or_default();
         out.push('\n');
-        if write.write_all(out.as_bytes()).await.is_err() {
+        if shutdown {
+            let mut gone = closing.gone.subscribe();
+            let _ = tokio::time::timeout(QUIT_WAIT, gone.wait_for(|gone| *gone)).await;
+        }
+        let written = write.write_all(out.as_bytes()).await;
+        if shutdown {
+            closing.answered.notify_one();
+        }
+        if written.is_err() {
             break;
         }
     }
