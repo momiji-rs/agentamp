@@ -84,9 +84,16 @@ fn close_terminal(name: &str, signal: bool, stderr_on_terminal: bool) -> Option<
             answered = true;
         }
     }
+    let framed = contains(&output, b"quit");
     drop(main);
     std::thread::sleep(Duration::from_secs(1));
     let problem = match process.try_wait().unwrap() {
+        // Then the terminal closed on a window that never got going, which proves nothing.
+        _ if !framed => {
+            let _ = process.kill();
+            let _ = process.wait();
+            Some("no first frame before the terminal closed".to_string())
+        }
         None => {
             let ticks = cpu_ticks(process.id());
             let _ = process.kill();
