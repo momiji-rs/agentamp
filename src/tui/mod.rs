@@ -28,7 +28,7 @@ use crate::model::{State, Status, Track};
 use crate::paths::Paths;
 pub use view::View;
 use library::{Choice, Focus};
-use view::{Cover, Prompt, PromptKind};
+use view::{Cover, Prompt, PromptKind, Queued};
 
 /// How often the window asks the daemon what it is doing.
 const POLL: Duration = Duration::from_millis(500);
@@ -38,10 +38,12 @@ const POLL: Duration = Duration::from_millis(500);
 const FIRST_FRAME: Duration = Duration::from_millis(50);
 const SEEK_STEP_MS: u32 = 10_000;
 const VOLUME_STEP: u8 = 5;
+/// The upcoming tracks the window asks for: more rows than a terminal has.
+const SHOWN: usize = 200;
 
 /// What the link thread hears from the daemon.
 enum Update {
-    Snapshot { status: Box<Status>, upcoming: Vec<Track>, history: Vec<Track> },
+    Snapshot { status: Box<Status>, upcoming: Vec<Track>, queued: Option<Queued>, history: Vec<Track> },
     Answer(Result<String, String>),
     /// A cover loaded, or failed to.
     Art { art: String, loaded: Option<art::Art> },
@@ -416,9 +418,13 @@ fn count_shelves(paths: &Paths, updates: &mpsc::Sender<Wake>) {
 /// The player's state, without starting it.
 fn snapshot(paths: &Paths) -> Result<Update> {
     let status = Box::new(serde_json::from_value(crate::send(paths, &Request::Status, false)?)?);
-    let queue = crate::send(paths, &Request::Queue, false)?;
+    let queue = crate::send(paths, &Request::Queue { offset: 0, count: Some(SHOWN) }, false)?;
     let tracks = |key: &str| -> Vec<Track> { serde_json::from_value(queue[key].clone()).unwrap_or_default() };
-    Ok(Update::Snapshot { status, upcoming: tracks("upcoming"), history: tracks("history") })
+    let queued = queue["total"].as_u64().map(|upcoming| Queued {
+        tracks: upcoming as usize + usize::from(!queue["current"].is_null()),
+        length_ms: queue["length_ms"].as_u64(),
+    });
+    Ok(Update::Snapshot { status, upcoming: tracks("upcoming"), queued, history: tracks("history") })
 }
 
 /// One frame of the window at `cols`×`rows`, as terminal bytes, with the
@@ -445,11 +451,15 @@ impl View {
     /// Takes in what the daemon said; true when the window must redraw.
     fn apply(&mut self, update: Update) -> bool {
         match update {
-            Update::Snapshot { status, upcoming, history } => {
+            Update::Snapshot { status, upcoming, queued, history } => {
                 let status = *status;
-                let changed = status != self.status || upcoming != self.upcoming || history != self.history;
+                let changed = status != self.status
+                    || upcoming != self.upcoming
+                    || queued != self.queued
+                    || history != self.history;
                 self.status = status;
                 self.upcoming = upcoming;
+                self.queued = queued;
                 self.history = history;
                 self.since_ms = 0;
                 changed

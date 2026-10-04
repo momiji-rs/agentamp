@@ -8,6 +8,22 @@ use crate::model::Track;
 
 const HISTORY: usize = 100;
 
+/// A stretch of the upcoming tracks, as the window and agents ask for it,
+/// with what the whole queue holds. A long queue is not sent whole twice a
+/// second.
+#[derive(Debug, Serialize)]
+pub struct Stretch<'a> {
+    pub current: Option<&'a Track>,
+    /// The upcoming tracks from `offset`.
+    pub upcoming: Vec<&'a Track>,
+    pub offset: usize,
+    /// How many tracks play after the current one in all.
+    pub total: usize,
+    /// How long the current and upcoming tracks last together, when every
+    /// length is known.
+    pub length_ms: Option<u64>,
+}
+
 #[derive(Debug, Default, Serialize)]
 pub struct Queue {
     pub current: Option<Track>,
@@ -59,6 +75,19 @@ impl Queue {
 
     pub fn clear(&mut self) {
         self.upcoming.clear();
+    }
+
+    /// `count` upcoming tracks from `offset`, or all of them from there.
+    pub fn stretch(&self, offset: usize, count: Option<usize>) -> Stretch<'_> {
+        let lengths = self.current.iter().chain(&self.upcoming).map(|t| t.duration_ms);
+        let length_ms = lengths.map(|ms| (ms > 0).then_some(u64::from(ms))).sum();
+        Stretch {
+            current: self.current.as_ref(),
+            upcoming: self.upcoming.iter().skip(offset).take(count.unwrap_or(usize::MAX)).collect(),
+            offset,
+            total: self.upcoming.len(),
+            length_ms,
+        }
     }
 
     /// The downloads the queue waits for, in the order they will play, once each.
@@ -173,6 +202,24 @@ mod tests {
         assert_eq!(q.upcoming[1].title, "Song");
         assert_eq!(q.upcoming[1].link.as_deref(), Some("https://youtu.be/x"));
         assert_eq!(q.upcoming[0].title, "b");
+    }
+
+    #[test]
+    fn a_stretch_says_what_the_whole_queue_holds() {
+        let mut q = Queue::default();
+        replace(&mut q, (0..6).map(|i| t(&i.to_string())).collect());
+        let stretch = q.stretch(2, Some(2));
+        let uris: Vec<&str> = stretch.upcoming.iter().map(|t| t.uri.as_str()).collect();
+        assert_eq!((stretch.current.map(|t| t.uri.as_str()), uris, stretch.total), (Some("0"), vec!["3", "4"], 5));
+        assert_eq!(q.stretch(0, None).upcoming.len(), 5);
+        assert_eq!(q.stretch(9, Some(2)).upcoming.len(), 0);
+        for (i, track) in q.upcoming.iter_mut().enumerate() {
+            track.duration_ms = 1000 * i as u32;
+        }
+        assert_eq!(q.stretch(0, Some(1)).length_ms, None, "one length is unknown");
+        q.upcoming[0].duration_ms = 500;
+        q.current.as_mut().unwrap().duration_ms = 100;
+        assert_eq!(q.stretch(0, Some(1)).length_ms, Some(100 + 500 + 1000 + 2000 + 3000 + 4000));
     }
 
     #[test]

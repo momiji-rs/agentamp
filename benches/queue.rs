@@ -21,7 +21,8 @@ fn queue_of(n: usize) -> Queue {
 }
 
 /// One look of the window at the queue, every half second while it is open:
-/// the daemon's answer written as the socket carries it, then read back.
+/// the daemon's answer, its first 200 upcoming tracks, written as the socket
+/// carries it, then read back.
 fn snapshot(c: &mut Criterion) {
     let mut group = c.benchmark_group("queue/snapshot");
     for n in SIZES {
@@ -29,7 +30,7 @@ fn snapshot(c: &mut Criterion) {
         group.throughput(Throughput::Elements(n as u64));
         group.bench_with_input(BenchmarkId::from_parameter(n), &queue, |b, queue| {
             b.iter(|| {
-                let data = serde_json::to_value(queue).unwrap();
+                let data = serde_json::to_value(queue.stretch(0, Some(200))).unwrap();
                 let line = serde_json::to_string(&Response::ok(data)).unwrap();
                 let answer: Response = serde_json::from_str(black_box(&line)).unwrap();
                 let queue: Value = answer.into_result().unwrap();

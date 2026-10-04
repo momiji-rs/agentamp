@@ -205,12 +205,14 @@ fn an_unchanged_snapshot_needs_no_redraw() {
     let same = Update::Snapshot {
         status: Box::new(view.status.clone()),
         upcoming: view.upcoming.clone(),
+        queued: view.queued,
         history: view.history.clone(),
     };
     assert!(!view.apply(same));
     let mut later = view.status.clone();
     later.position_ms += 1000;
-    let moved = Update::Snapshot { status: Box::new(later), upcoming: view.upcoming.clone(), history: view.history.clone() };
+    let upcoming = view.upcoming.clone();
+    let moved = Update::Snapshot { status: Box::new(later), upcoming, queued: view.queued, history: view.history.clone() };
     assert!(view.apply(moved));
 }
 
@@ -250,7 +252,7 @@ fn a_snapshot_restarts_the_clock() {
     let mut view = demo();
     view.since_ms = 900;
     let status = Box::new(view.status.clone());
-    view.apply(Update::Snapshot { status, upcoming: Vec::new(), history: Vec::new() });
+    view.apply(Update::Snapshot { status, upcoming: Vec::new(), queued: None, history: Vec::new() });
     assert_eq!(view.since_ms, 0);
 }
 
@@ -344,6 +346,13 @@ fn the_queue_reads_like_an_album_page() {
     let idle = View { upcoming: vec![track(Source::Local, "September", "Earth, Wind & Fire", "", 215)], ..View::default() };
     let screen = text(&idle, 90, 30);
     assert!(screen.contains("1 track · 4 min") && !screen.contains("Now playing"), "{screen}");
+}
+
+#[test]
+fn a_long_queue_counts_what_the_window_was_not_sent() {
+    let view = View { queued: Some(view::Queued { tracks: 9688, length_ms: Some(2_400_000_000) }), ..demo() };
+    let screen = text(&view, 90, 30);
+    assert!(screen.contains("9688 tracks · 666 hr 40 min"), "{screen}");
 }
 
 #[test]

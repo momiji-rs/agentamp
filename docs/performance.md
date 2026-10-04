@@ -31,11 +31,12 @@ cached, on a quiet machine (load below 6). Release build.
   4.5 s. The sound itself waits for yt-dlp, about 2.5 s, the first time
   only: a link or search asked for again is ready in 5 to 6 ms (2026-10-03).
 - As the queue and the play log grow (benchmarks, 2026-10-04): the
-  window's state snapshot, asked for every 500 ms, costs 26 ms at 10 000
-  queued tracks (the size of the Liked Songs) and 298 ms at 100 000, as
-  it carries the whole queue. Reading a batch of 200 tracks' details costs
-  4.7 ms at 10 000 and 160 ms at 100 000, worse than linear. Keeping one
-  play takes 0.93 ms whatever the log's size. See below.
+  window's look at the queue, every 500 ms, costs 0.41 ms at 10 000
+  queued tracks (the size of the Liked Songs) and 0.51 ms at 100 000, as
+  it asks for the first 200 upcoming tracks and the whole queue's count
+  and length. Reading a batch of 200 tracks' details costs 4.7 ms at
+  10 000 and 160 ms at 100 000, worse than linear. Keeping one play takes 0.93 ms whatever
+  the log's size. See below.
 
 ## How to measure
 
@@ -99,6 +100,18 @@ Criterion, release build, the median of each benchmark's run, load about
 - Questions over every play grow linearly and stay under 30 ms at
   100 000 plays; the indexed ones do not grow.
 
+### The window's look, after (2026-10-04)
+
+The daemon answers the window with a stretch of the queue. Against the
+table above, load about 3.8:
+
+| benchmark | 1 000 | 10 000 | 100 000 |
+|---|---|---|---|
+| queue/snapshot | 0.40 ms (−80%) | 0.41 ms (−98%) | 0.51 ms (−99.8%) |
+
+`downloads` and `replace`, unchanged, measured 6 to 8% slower at 100 000
+in the same run, under the higher load.
+
 ## YouTube play and add (2026-10-03)
 
 Release build, `AGENTAMP_AUDIO=null`, a fresh `AGENTAMP_HOME`, yt-dlp
@@ -159,7 +172,6 @@ Then:
 
 ## What is left
 
-- The snapshot: send the window what it shows, not the whole queue.
 - Details: find a track's places in the queue without walking it once
   per track.
 

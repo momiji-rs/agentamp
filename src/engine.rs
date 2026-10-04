@@ -252,7 +252,7 @@ impl Engine {
                 Some(deck) => deck.seek(position_ms)?,
                 None => bail!("nothing is playing"),
             },
-            Request::Queue => return Ok(serde_json::to_value(&self.queue)?),
+            Request::Queue { offset, count } => return Ok(serde_json::to_value(self.queue.stretch(offset, count))?),
             Request::Status | Request::Shutdown => {}
             Request::Play { .. } | Request::Add { .. } => bail!("play and add are resolved first"),
             Request::Listen => bail!("listening is answered by the connection"),
@@ -729,7 +729,7 @@ mod tests {
         b.title = "Song B".into();
         tx.send(Msg::Resolved(vec![b])).unwrap();
         let (reply, answer) = oneshot::channel();
-        tx.send(Msg::Control(Request::Queue, reply)).unwrap();
+        tx.send(Msg::Control(Request::Queue { offset: 0, count: None }, reply)).unwrap();
         let queue = answer.await.unwrap().into_result().unwrap();
         assert_eq!(queue["upcoming"][0]["title"], "Song B");
     }
@@ -840,7 +840,7 @@ mod tests {
         downloads.finish("ytsearch1:a", Ok(file("a")));
         eventually("b goes again", async || downloads.running() == searches(&["b", "d"])).await;
         let (reply, answer) = oneshot::channel();
-        tx.send(Msg::Control(Request::Queue, reply)).unwrap();
+        tx.send(Msg::Control(Request::Queue { offset: 0, count: None }, reply)).unwrap();
         let queue = answer.await.unwrap().into_result().unwrap();
         assert_eq!(queue["current"]["uri"], "/cache/a.m4a");
         assert_eq!(queue["upcoming"][3]["uri"], "/cache/a.m4a", "one download for both");

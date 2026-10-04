@@ -169,7 +169,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Search { query, count } => Request::SearchSpotify { query: query.join(" "), count },
         Cmd::Browse { target, offset, count } => Request::Browse { target: target.join(" "), offset, count },
         Cmd::Now => Request::Status,
-        Cmd::Queue => Request::Queue,
+        Cmd::Queue => Request::Queue { offset: 0, count: None },
         Cmd::Volume { percent } => Request::Volume { percent },
         Cmd::Seek { position } => Request::Seek { position_ms: parse_position(&position)? },
         Cmd::Quit => {
@@ -179,7 +179,7 @@ fn run(cli: Cli) -> Result<()> {
             Request::Shutdown
         }
     };
-    let autostart = !matches!(request, Request::Shutdown | Request::Status | Request::Queue);
+    let autostart = !matches!(request, Request::Shutdown | Request::Status | Request::Queue { .. });
     let data = send(&paths, &request, autostart)?;
     if cli.json {
         println!("{data}");
@@ -222,8 +222,9 @@ fn send(paths: &Paths, request: &Request, autostart: bool) -> Result<Value> {
                         error: None,
                     })?);
                 }
-                if let Request::Queue = request {
-                    return Ok(serde_json::json!({"current": null, "upcoming": []}));
+                if let Request::Queue { offset, .. } = request {
+                    let empty = crate::queue::Queue::default();
+                    return Ok(serde_json::to_value(empty.stretch(*offset, Some(0)))?);
                 }
                 return Ok(Value::Null);
             }
@@ -276,7 +277,7 @@ fn parse_position(text: &str) -> Result<u32> {
 fn describe(request: &Request, data: &Value) -> Option<String> {
     match request {
         Request::Shutdown | Request::Clear => None,
-        Request::Queue => {
+        Request::Queue { .. } => {
             let current: Option<Track> = serde_json::from_value(data["current"].clone()).ok().flatten();
             let upcoming: Vec<Track> = serde_json::from_value(data["upcoming"].clone()).unwrap_or_default();
             let mut lines = vec![match &current {

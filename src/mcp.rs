@@ -143,13 +143,6 @@ struct Added {
     status: Status,
 }
 
-/// The queue as the daemon gives it, whole.
-#[derive(Deserialize)]
-struct Whole {
-    current: Option<Track>,
-    upcoming: Vec<Track>,
-}
-
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[schemars(transform = plain_integers)]
 struct Queue {
@@ -177,7 +170,7 @@ impl Player {
     /// errors the agent reads and can act on.
     async fn ask<T: DeserializeOwned>(&self, request: Request) -> Result<Json<T>, String> {
         let paths = self.paths.clone();
-        let autostart = !matches!(request, Request::Status | Request::Queue);
+        let autostart = !matches!(request, Request::Status | Request::Queue { .. });
         let data = tokio::task::spawn_blocking(move || crate::send(&paths, &request, autostart))
             .await
             .map_err(|e| e.to_string())?
@@ -308,10 +301,7 @@ impl Player {
     /// there are in all. Never starts the player.
     #[tool(annotations(title = "Queue", read_only_hint = true, open_world_hint = false))]
     async fn queue(&self, Parameters(Window { offset, count }): Parameters<Window>) -> Result<Json<Queue>, String> {
-        let Json(Whole { current, upcoming }) = self.ask(Request::Queue).await?;
-        let total = upcoming.len();
-        let upcoming = upcoming.into_iter().skip(offset).take(count.clamp(1, 100)).collect();
-        Ok(Json(Queue { current, upcoming, offset, total }))
+        self.ask(Request::Queue { offset, count: Some(count.clamp(1, 100)) }).await
     }
 }
 

@@ -66,10 +66,22 @@ pub enum Cover {
     Ready(Picture),
 }
 
+/// What the whole queue holds when the window has only its start.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Queued {
+    /// The current track and every upcoming one.
+    pub tracks: usize,
+    /// Their length together, when every one is known.
+    pub length_ms: Option<u64>,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct View {
     pub status: Status,
+    /// The start of what plays next.
     pub upcoming: Vec<Track>,
+    /// The whole queue's size, when `upcoming` may be only its start.
+    pub queued: Option<Queued>,
     /// Played tracks, oldest first.
     pub history: Vec<Track>,
     pub prompt: Option<Prompt>,
@@ -101,6 +113,7 @@ impl Default for View {
                 error: None,
             },
             upcoming: Vec::new(),
+            queued: None,
             history: Vec::new(),
             prompt: None,
             message: None,
@@ -446,7 +459,11 @@ fn queue(frame: &mut Frame, area: Rect, view: &View) {
     let mut rest = inner;
     let mut header = vec![Line::raw(""), Line::styled("Queue", Style::new().fg(TEXT).add_modifier(Modifier::BOLD))];
     if !tracks.is_empty() {
-        header.push(Line::styled(summary(&tracks), Style::new().fg(SUBDUED)));
+        let line = match view.queued {
+            Some(queued) => totals(queued.tracks, queued.length_ms),
+            None => summary(&tracks),
+        };
+        header.push(Line::styled(line, Style::new().fg(SUBDUED)));
     }
     frame.render_widget(Paragraph::new(header), take(&mut rest, 4));
     if tracks.is_empty() {
@@ -514,11 +531,15 @@ fn fade(buffer: &mut Buffer, area: Rect, tint: [u8; 3]) {
 
 /// "5 tracks · 21 min", the time only when every length is known.
 pub fn summary(tracks: &[&Track]) -> String {
-    let count = if tracks.len() == 1 { "1 track".to_string() } else { format!("{} tracks", tracks.len()) };
-    if tracks.iter().any(|t| t.duration_ms == 0) {
-        return count;
-    }
-    let minutes = (tracks.iter().map(|t| u64::from(t.duration_ms)).sum::<u64>() + 30_000) / 60_000;
+    let lengths = tracks.iter().map(|t| (t.duration_ms > 0).then_some(u64::from(t.duration_ms)));
+    totals(tracks.len(), lengths.sum())
+}
+
+/// "5 tracks · 21 min" for `count` tracks lasting `length_ms`.
+pub fn totals(count: usize, length_ms: Option<u64>) -> String {
+    let count = if count == 1 { "1 track".to_string() } else { format!("{count} tracks") };
+    let Some(length_ms) = length_ms else { return count };
+    let minutes = (length_ms + 30_000) / 60_000;
     match minutes / 60 {
         0 => format!("{count} · {minutes} min"),
         hours => format!("{count} · {hours} hr {} min", minutes % 60),

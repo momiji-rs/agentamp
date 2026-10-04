@@ -30,7 +30,14 @@ pub enum Request {
     Stop,
     Clear,
     Status,
-    Queue,
+    /// The current track and `count` upcoming ones from `offset` (all of
+    /// them without a count), with how many there are and their length.
+    Queue {
+        #[serde(default, skip_serializing_if = "is_zero")]
+        offset: usize,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        count: Option<usize>,
+    },
     Volume { percent: u8 },
     Seek { position_ms: u32 },
     /// Search Spotify for up to `count` tracks, albums, playlists and artists.
@@ -42,6 +49,10 @@ pub enum Request {
     /// Stream the sound as it plays, for drawing it: after the answer the
     /// connection carries `tap` chunks, not JSON.
     Listen,
+}
+
+fn is_zero(n: &usize) -> bool {
+    *n == 0
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -95,6 +106,9 @@ mod tests {
         let add: Request = serde_json::from_str(r#"{"cmd":"add","target":"yt:lofi"}"#).unwrap();
         assert_eq!(add, Request::Add { target: "yt:lofi".into(), next: false });
         assert_eq!(serde_json::to_string(&Request::Pause).unwrap(), r#"{"cmd":"pause"}"#);
+        let whole: Request = serde_json::from_str(r#"{"cmd":"queue"}"#).unwrap();
+        assert_eq!(whole, Request::Queue { offset: 0, count: None });
+        assert_eq!(serde_json::to_string(&whole).unwrap(), r#"{"cmd":"queue"}"#);
         assert_eq!(
             serde_json::to_string(&Request::Volume { percent: 40 }).unwrap(),
             r#"{"cmd":"volume","percent":40}"#
