@@ -62,6 +62,13 @@ The benchmarks (`benches/`) build the same made-up library every run,
 shaped like a real one (about 3.7 songs an artist, a few artists holding
 most), and keep their files in `target/bench-scratch/`.
 
+`tests/scaling.rs` runs in `cargo test`, so in CI on Linux and macOS: it
+times the same cases at 1 000 and 10 000 and fails when ten times the data
+costs more than 20 times the time (3 times for what an index or a fixed
+window answers), or when a case leaves its budget at 10 000. The budgets
+are four to five times a debug build on starship. A queue sent whole to
+the window again fails it at ×10.2 (2026-10-04).
+
 ## While playing (2026-10-02)
 
 Release build in Ghostty 1.3.1, full screen on a 1920×1080 headless
