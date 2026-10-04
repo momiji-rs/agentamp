@@ -168,9 +168,6 @@ impl Deck for NullDeck {
     fn load(&mut self, track: &Track, on_end: OnEnd) -> Result<()> {
         let duration_ms = track.duration_ms;
         let generation = self.generation.fetch_add(1, Ordering::SeqCst) + 1;
-        self.started = Some(Instant::now());
-        self.offset_ms = 0;
-        self.paused = false;
         let current = self.generation.clone();
         let length = Duration::from_millis(if duration_ms == 0 { 1000 } else { duration_ms.into() });
         std::thread::spawn(move || {
@@ -179,6 +176,12 @@ impl Deck for NullDeck {
                 on_end();
             }
         });
+        // The clock starts once the track is ready, as a device's does: on a
+        // busy machine the spawn takes milliseconds a track paused at once
+        // has not played.
+        self.started = Some(Instant::now());
+        self.offset_ms = 0;
+        self.paused = false;
         Ok(())
     }
 
