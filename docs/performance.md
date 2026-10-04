@@ -35,12 +35,13 @@ cached, on a quiet machine (load below 6). Release build.
 
 ```sh
 AGENTAMP_TRACE=<file> agentamp        # marks each step, µs since 1970
-scripts/startup-bench.py --terminal kitty|sixel|plain|silent
-scripts/terminal-bench.py --terminals ghostty,ghostty-warm,foot,alacritty
+cargo build --release
+cargo run --release --example startup_bench -- --terminal kitty|sixel|plain|silent
+cargo run --release --example terminal_bench -- --terminals ghostty,ghostty-warm,foot,alacritty
 ```
 
-`startup-bench.py` plays the terminal in a pseudo-terminal, presses `/`
-on the first frame and times the prompt. `terminal-bench.py` opens real
+`startup_bench` plays the terminal in a pseudo-terminal, presses `/`
+on the first frame and times the prompt. `terminal_bench` opens real
 terminals on a headless Hyprland output, out of sight. Both read the
 daemon at `AGENTAMP_HOME`; play a long track there first. Load from other
 work skews both: check `uptime` and rerun on a quiet machine.
@@ -97,6 +98,7 @@ Then:
   0.37 ms.
 - A terminal closed without a hang-up signal ends the window, instead of
   leaving it spinning at full CPU (crossterm-rs/crossterm#793).
+  `tests/hangup.rs` checks it on Linux, with and without the signal.
 - A terminal that never answers the image query now holds the first frame
   for 500 ms, not ratatui-image's default 2 s (2017 ms to 519 ms, in a
   pseudo-terminal that answers nothing). Every terminal answers the
