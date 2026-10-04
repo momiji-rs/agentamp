@@ -25,9 +25,13 @@ playlists and artists, `search_youtube` lists videos; pass a result's `target` t
 `browse` opens a Spotify artist, album, playlist or folder, or the library's playlists, albums and artists, \
 the Liked Songs and the top artists and tracks; its items' targets play or browse further. \
 `sync_library` copies the Liked Songs, with when each was liked, and their albums' release dates into the \
-library's SQLite database. \
+library's SQLite database. `library_schema` describes its tables (the plays heard, the Liked Songs, their \
+albums) and `query_library` answers a SELECT over them: what was played most, liked by year or decade, and so on. \
 A YouTube track answers at once with `downloading: true` and plays when its file is here; one that fails \
 leaves the queue and `now_playing` gives the error.";
+
+/// The longest an agent's question to the database may run.
+const QUESTION_TIME: std::time::Duration = std::time::Duration::from_secs(10);
 
 pub fn run(paths: Paths) -> Result<()> {
     tokio::runtime::Builder::new_current_thread().enable_all().build()?.block_on(async {
@@ -117,6 +121,26 @@ struct Window {
     #[serde(default = "twenty_upcoming")]
     #[schemars(range(min = 1, max = 100))]
     count: usize,
+}
+
+#[derive(Deserialize, JsonSchema)]
+#[schemars(transform = plain_integers)]
+struct Question {
+    /// One SQLite SELECT (or WITH) statement over the tables `library_schema` describes.
+    sql: String,
+    /// The most rows to answer with, 1 to 1000.
+    #[serde(default = "hundred")]
+    #[schemars(range(min = 1, max = 1000))]
+    rows: usize,
+}
+
+fn hundred() -> usize {
+    100
+}
+
+#[derive(Serialize, Deserialize, JsonSchema)]
+struct Tables {
+    tables: Vec<crate::sql::Table>,
 }
 
 fn twenty_upcoming() -> usize {
@@ -285,6 +309,35 @@ impl Player {
     #[tool(annotations(title = "Sync the Spotify library", read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = true))]
     async fn sync_library(&self) -> Result<Json<crate::sync::Synced>, String> {
         self.ask(Request::SyncLibrary).await
+    }
+
+    /// The tables of the library's database, what each column holds, and how many rows each has now.
+    /// Read it before `query_library`. Needs no player and no sign-in.
+    #[tool(annotations(title = "Library schema", read_only_hint = true, open_world_hint = false))]
+    async fn library_schema(&self) -> Result<Json<Tables>, String> {
+        let path = self.paths.database();
+        let tables = tokio::task::spawn_blocking(move || crate::sql::schema(&path))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("{e:#}"))?;
+        Ok(Json(Tables { tables }))
+    }
+
+    /// Answer one SQLite SELECT over the library's database, read only: its columns, and up to `rows`
+    /// rows with `truncated` when more followed. Gives up after 10 seconds. Times are UTC ISO 8601
+    /// text, so `substr(started_at, 1, 7)` is the month; join `liked.album_uri` to `albums.uri`
+    /// for release dates. Needs no player and no sign-in.
+    #[tool(annotations(title = "Query the library", read_only_hint = true, open_world_hint = false))]
+    async fn query_library(&self, Parameters(Question { sql, rows }): Parameters<Question>) -> Result<Json<crate::sql::Answer>, String> {
+        if !(1..=1000).contains(&rows) {
+            return Err(format!("a question is answered with 1 to 1000 rows, not {rows}"));
+        }
+        let path = self.paths.database();
+        let answer = tokio::task::spawn_blocking(move || crate::sql::ask(&path, &sql, Some(rows), Some(QUESTION_TIME)))
+            .await
+            .map_err(|e| e.to_string())?
+            .map_err(|e| format!("{e:#}"))?;
+        Ok(Json(answer))
     }
 
     /// Search YouTube for videos to play, without downloading or playing any. Live streams are left out.

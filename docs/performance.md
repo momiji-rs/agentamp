@@ -39,6 +39,10 @@ cached, on a quiet machine (load below 6). Release build.
   the log's size. See below.
 - `agentamp sync` of 9 688 Liked Songs and their 1 130 albums takes 5.8 s
   into an empty database and 4.2 s again, in 13 requests (2026-10-04).
+- `agentamp sql`, a new process each time, answers in 12 ms for
+  `SELECT 1`, about 26 ms for a count or the top artists of 10 000 Liked
+  Songs, and 52 to 133 ms for a question over 100 000 plays (release
+  build, load about 30, 2026-10-04).
 
 ## How to measure
 
@@ -170,6 +174,27 @@ session's build).
   debug build (`tests/scaling.rs`).
 - Of the albums, 1 044 are dated to the day, 2 to the month, 84 to the
   year only.
+
+## Asking the library in SQL (2026-10-04)
+
+`agentamp sql` opens the database read only, without the player. Release
+build, the benchmarks' databases (`target/bench-scratch`), wall time of
+the whole process, load about 30 (another session's build), so these are
+upper bounds.
+
+| question | rows in the table | ms |
+|---|---|---|
+| `SELECT 1` | | 12 |
+| `count(*)` of the Liked Songs | 10 000 | 27 |
+| top 10 artists of the Liked Songs | 10 000 | 26 |
+| every Liked Song, as a table | 10 000 | 60 |
+| plays by month | 100 000 | 52 |
+| top 20 artists of every play, with time heard | 100 000 | 133 |
+| every play, as JSON (16 MB) | 100 000 | 262 |
+
+An agent's `query_library` answers with at most 1 000 rows and stops a
+question after 10 s (`sqlite3_interrupt`), so one unbounded `WITH
+RECURSIVE` cannot hold the MCP server.
 
 ## YouTube play and add (2026-10-03)
 

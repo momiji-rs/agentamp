@@ -62,8 +62,9 @@ schemars = "1"
 # The same width tables ratatui lays out with, to place the cursor in --frame output.
 unicode-width = "0.2"
 # The library's database: what has played, for the CLI's and agents' own
-# questions in SQL. SQLite built in, so no system library is needed.
-rusqlite = { version = "0.40", features = ["bundled"] }
+# questions in SQL. SQLite built in, so no system library is needed;
+# `limits` keeps a question from attaching another database.
+rusqlite = { version = "0.40", features = ["bundled", "limits"] }
 
 # To notice the terminal closing: crossterm's reader spins at full CPU on a
 # terminal that hung up without a signal (crossterm-rs/crossterm#793).

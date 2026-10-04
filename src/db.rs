@@ -11,7 +11,8 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
 use log::warn;
-use rusqlite::{Connection, params};
+use rusqlite::limits::Limit;
+use rusqlite::{Connection, OpenFlags, params};
 
 use crate::model::{Source, Track};
 
@@ -98,6 +99,26 @@ pub fn open(path: &Path) -> Result<Connection> {
     // Readers go on while the daemon writes.
     db.pragma_update(None, "journal_mode", "WAL")?;
     db.busy_timeout(std::time::Duration::from_secs(5))?;
+    migrate(&mut db)?;
+    Ok(db)
+}
+
+/// Opens the database to read only, as `agentamp sql` and agents ask it:
+/// it cannot be written, nor another database attached to it.
+pub fn read_only(path: &Path) -> Result<Connection> {
+    if !path.exists() {
+        anyhow::bail!("there is no library yet: it starts with the first track heard, or `agentamp sync`");
+    }
+    let db = Connection::open_with_flags(path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)?;
+    db.pragma_update(None, "query_only", true)?;
+    db.set_limit(Limit::SQLITE_LIMIT_ATTACHED, 0)?;
+    db.busy_timeout(std::time::Duration::from_secs(5))?;
+    Ok(db)
+}
+
+/// A database with nothing in it yet, in memory, for what its tables would be.
+pub fn empty() -> Result<Connection> {
+    let mut db = Connection::open_in_memory()?;
     migrate(&mut db)?;
     Ok(db)
 }

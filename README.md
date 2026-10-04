@@ -95,6 +95,8 @@ agentamp --json now                # the same, for scripts and agents
 agentamp pause | resume | toggle | next | prev | stop | clear
 agentamp queue
 agentamp sync                      # your Liked Songs and their albums, into the database
+agentamp sql "SELECT artist, count(*) FROM plays GROUP BY 1 ORDER BY 2 DESC LIMIT 10"
+agentamp sql --schema              # what each table and column holds
 agentamp seek 1:30
 agentamp volume 40
 agentamp quit
@@ -121,6 +123,20 @@ their albums' title, artists, release date (`2014-09-26`, or `2014-09` or
 now and says how many are new and gone; it reads only the albums it has
 not kept yet, 500 to a request. Ten thousand songs take about 5 seconds.
 Spotify gives no genres, so there are none.
+
+`agentamp sql` asks the database a question in SQL and prints the answer
+as a table (`--json` for its columns and rows), reading the question from
+stdin when none is given. It opens the file read only, without the
+player: a statement that would change anything, a second statement or
+another database is refused. `agentamp sql --schema` lists the tables,
+what each column holds and how many rows each has. Times are UTC
+ISO 8601 text, so `substr(started_at, 1, 7)` is a month, and
+`liked.album_uri` joins `albums.uri` for release dates:
+
+```sh
+agentamp sql "SELECT substr(a.released, 1, 3) || '0s' AS decade, count(*)
+  FROM liked l JOIN albums a ON a.uri = l.album_uri GROUP BY 1 ORDER BY 1"
+```
 
 The volume goes from 0 to 100 on the same curve for Spotify, YouTube and
 files, logarithmic over 60 dB as librespot's is: 50 is 30 dB below full,
@@ -184,16 +200,18 @@ server on stdin and stdout, built on the official
 2026-07-28 revision and the older ones with the `initialize` handshake. Its
 tools are the CLI's controls: `play`, `add`, `pause`, `resume`, `next`,
 `previous`, `stop`, `clear_queue`, `set_volume`, `seek`, `now_playing`,
-`queue`, `search_spotify`, `browse` and `sync_library`, which do what
-`search`, `browse` and `sync` do. Each answers as structured JSON, the controls with the
+`queue`, `search_spotify`, `browse`, `sync_library`, `library_schema` and
+`query_library`, which do what `search`, `browse`, `sync` and `sql` do. Each answers as structured JSON, the controls with the
 player's state, and a refusal (a missing file, Spotify without a sign-in)
 as a tool error the agent can read. `queue` lists 20 upcoming tracks
 (`count` up to 100, from `offset`) and says how many there are in all, so
 a long playlist does not fill the agent's context. `search_youtube` lists up to 20 videos for a query, with
 their title, channel, length and a link to pass to `play` or `add`; it
 downloads nothing and leaves out live streams. Like the CLI it starts the
-background player when needed; `now_playing`, `queue` and `search_youtube`
-never do. It runs no network listener of its own.
+background player when needed; `now_playing`, `queue`, `search_youtube`,
+`library_schema` and `query_library` never do. `query_library` answers with
+100 rows (`rows` up to 1000) and says when more followed, and gives up on
+a question after 10 seconds. It runs no network listener of its own.
 
 ```sh
 claude mcp add agentamp -- agentamp mcp     # Claude Code

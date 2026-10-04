@@ -137,8 +137,8 @@ fn clients_with_the_handshake_get_every_tool() {
     assert_eq!(
         names,
         [
-            "add", "browse", "clear_queue", "next", "now_playing", "pause", "play", "previous", "queue",
-            "resume", "search_spotify", "search_youtube", "seek", "set_volume", "stop", "sync_library"
+            "add", "browse", "clear_queue", "library_schema", "next", "now_playing", "pause", "play", "previous",
+            "query_library", "queue", "resume", "search_spotify", "search_youtube", "seek", "set_volume", "stop", "sync_library"
         ]
     );
     for tool in &tools {
@@ -165,6 +165,8 @@ fn clients_with_the_handshake_get_every_tool() {
     assert_eq!(tool("play")["inputSchema"]["required"], json!(["target"]));
     assert_eq!(tool("queue")["inputSchema"]["properties"]["count"]["maximum"], 100);
     assert_eq!(tool("set_volume")["inputSchema"]["properties"]["percent"]["maximum"], 100);
+    assert_eq!(tool("query_library")["annotations"]["readOnlyHint"], true);
+    assert_eq!(tool("query_library")["inputSchema"]["required"], json!(["sql"]));
 }
 
 #[test]
@@ -177,6 +179,11 @@ fn clients_without_the_handshake_play_and_control() {
     assert_eq!(now["isError"], false);
     assert_eq!(now["structuredContent"]["state"], "stopped");
     assert!(!server.home.join("run/agentamp.sock").exists(), "now_playing must not start the player");
+    let empty = server.call("query_library", json!({"sql": "SELECT * FROM plays"}));
+    assert_eq!(empty["isError"], true);
+    assert!(empty["content"][0]["text"].as_str().unwrap().contains("no library yet"), "{empty}");
+    let tables = server.call("library_schema", json!({}))["structuredContent"]["tables"].clone();
+    assert_eq!((tables[0]["name"].clone(), tables[0]["rows"].clone()), (json!("plays"), json!(0)), "{tables}");
 
     let music = server.home.join("music");
     wav(&music.join("1 First.wav"), 60);
@@ -206,6 +213,21 @@ fn clients_without_the_handshake_play_and_control() {
     assert_eq!(server.call("next", json!({}))["structuredContent"]["track"]["title"], "2 Second");
     assert_eq!(server.call("clear_queue", json!({}))["structuredContent"]["queue_len"], 0);
     assert_eq!(server.call("stop", json!({}))["structuredContent"]["state"], "stopped");
+
+    // What played is the agent's to ask about, as the player writes it down.
+    let ask = json!({"sql": "SELECT title, source FROM plays ORDER BY id", "rows": 1});
+    let mut plays = Value::Null;
+    for _ in 0..250 {
+        plays = server.call("query_library", ask.clone())["structuredContent"].clone();
+        if plays["truncated"] == true {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    assert_eq!(plays, json!({"columns": ["title", "source"], "rows": [["1 First", "local"]], "truncated": true}));
+    let write = server.call("query_library", json!({"sql": "DELETE FROM plays"}));
+    assert_eq!(write["isError"], true);
+    assert!(write["content"][0]["text"].as_str().unwrap().contains("only questions"), "{write}");
 
     // What the agent can correct comes back as a tool error it reads.
     let loud = server.call("set_volume", json!({"percent": 150}));

@@ -21,6 +21,7 @@ pub mod queue;
 mod resolve;
 mod spotify;
 mod spotify_search;
+mod sql;
 mod sync;
 mod tap;
 mod target;
@@ -95,6 +96,15 @@ enum Cmd {
     /// Copy your Spotify Liked Songs, with when each was liked, and their
     /// albums' release dates into the library's database.
     Sync,
+    /// Ask the library's database in SQL: what has played, the Liked Songs
+    /// and their albums. Read only; the question comes from stdin when it is
+    /// not given.
+    Sql {
+        query: Vec<String>,
+        /// What each table and column holds, instead of an answer.
+        #[arg(long, conflicts_with = "query")]
+        schema: bool,
+    },
     /// What is playing.
     Now,
     /// What plays next.
@@ -161,6 +171,7 @@ fn run(cli: Cli) -> Result<()> {
             println!("{}", if removed { "Signed out of Spotify." } else { "Not signed in." });
             return Ok(());
         }
+        Cmd::Sql { query, schema } => return ask_library(&paths, query, schema, cli.json),
         Cmd::Play { target } => Request::Play { target: here(&target.join(" ")) },
         Cmd::Add { target, next } => Request::Add { target: here(&target.join(" ")), next },
         Cmd::Pause => Request::Pause,
@@ -206,6 +217,24 @@ fn run_daemon(paths: Paths) -> Result<()> {
         .enable_all()
         .build()?
         .block_on(daemon::run(paths))
+}
+
+/// `agentamp sql`: the database is read here, without the daemon.
+fn ask_library(paths: &Paths, query: Vec<String>, schema: bool, json: bool) -> Result<()> {
+    use std::io::{IsTerminal, Read};
+    if schema {
+        let tables = sql::schema(&paths.database())?;
+        let text = if json { serde_json::to_string(&tables)? } else { sql::schema_text(&tables) };
+        println!("{text}");
+        return Ok(());
+    }
+    let mut question = query.join(" ");
+    if question.is_empty() && !std::io::stdin().is_terminal() {
+        std::io::stdin().read_to_string(&mut question)?;
+    }
+    let answer = sql::ask(&paths.database(), &question, None, None)?;
+    println!("{}", if json { serde_json::to_string(&answer)? } else { sql::text(&answer) });
+    Ok(())
 }
 
 /// Sends `request`, starting the daemon first when it is not running.
