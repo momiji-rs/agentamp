@@ -125,6 +125,24 @@ have to keep. At 10 000 a batch costs about 0.23 ms on the engine, so it
 stays as it is. `downloads` and `replace`, unchanged, measured 6 to 8%
 slower at 100 000 in the same run, under the higher load.
 
+## Under load: 100 000 tracks and eight windows (2026-10-04)
+
+`cargo test --release --test stress -- --ignored --nocapture` starts a
+daemon with silent audio, plays a folder of 10 000 WAV files, adds it 9
+times more, then has eight windows ask for the status and 200 of the
+queue as fast as they can for 10 s, while an agent adds a track every
+100 ms. Load about 5:
+
+- `play` of the folder answers in 71 ms, each `add` of it in 60 ms.
+- The daemon holds 9 MiB idle, 13 MiB with 10 000 queued, 39 MiB with
+  99 999.
+- The windows wait 3.0 ms (median) and 6.7 ms (p99), 26 000 asks in 10 s,
+  at 1.3 cores: a real window asks twice a second. Each add takes 1.5 ms.
+- When the agent also reads the whole queue after each add, a read takes
+  118 ms on the daemon, and the windows' p99 goes to 83 ms (slowest
+  160 ms): the daemon answers one request at a time. Only `agentamp queue`
+  reads it whole; the window and the MCP tool ask for a stretch.
+
 ## YouTube play and add (2026-10-03)
 
 Release build, `AGENTAMP_AUDIO=null`, a fresh `AGENTAMP_HOME`, yt-dlp
@@ -185,6 +203,8 @@ Then:
 
 ## What is left
 
+- `agentamp queue` reads a long queue whole, holding up the daemon for
+  about 120 ms at 100 000 tracks; reading it a stretch at a time would not.
 - Details: an index of where each track sits in the queue, should a
   batch's walk ever show at 100 000 tracks.
 
