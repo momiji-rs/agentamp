@@ -1,7 +1,7 @@
 //! A real daemon, with silent audio, under a queue of 100 000 files and
 //! clients asking it at once: how long `play` and `add` take with 10 000
 //! files each, what the queue holds in memory, and what eight windows
-//! polling it while an agent adds to it wait for their answers.
+//! polling it wait while an agent adds to it and lists it whole.
 //!
 //! Slow and loud, so it is left out of `cargo test`:
 //!
@@ -44,7 +44,18 @@ fn wav(path: &Path, samples: u32) {
 
 struct Daemon {
     child: Child,
+    home: PathBuf,
     socket: PathBuf,
+}
+
+/// `agentamp` run as a person or an agent runs it, against the daemon at `home`.
+fn cli(home: &Path, args: &[&str]) -> std::process::Output {
+    Command::new(env!("CARGO_BIN_EXE_agentamp"))
+        .args(args)
+        .env("AGENTAMP_HOME", home)
+        .env("AGENTAMP_AUDIO", "null")
+        .output()
+        .unwrap()
 }
 
 impl Daemon {
@@ -63,7 +74,7 @@ impl Daemon {
             assert!(Instant::now() < deadline, "the daemon did not start");
             std::thread::sleep(Duration::from_millis(20));
         }
-        Self { child, socket }
+        Self { child, home: home.to_path_buf(), socket }
     }
 
     fn ask(&self, request: &Request) -> serde_json::Value {
@@ -107,8 +118,8 @@ fn mib(memory: Option<f64>) -> String {
 }
 
 /// Eight windows poll as fast as they can, the way each asks every 500 ms,
-/// while an agent adds a track every 100 ms and, when `whole`, reads the
-/// whole queue after each. Prints what they waited; gives the windows' p99.
+/// while an agent adds a track every 100 ms and, when `whole`, lists the
+/// whole queue with `agentamp queue` after each. Prints what they waited; gives the windows' p99.
 fn poll(daemon: &Daemon, one: &str, whole: bool) -> Duration {
     let stop = Arc::new(AtomicBool::new(false));
     let start = Arc::new(Barrier::new(WINDOWS + 2));
@@ -132,13 +143,14 @@ fn poll(daemon: &Daemon, one: &str, whole: bool) -> Duration {
         .collect();
     let agent = {
         let (stop, start, socket, one) = (stop.clone(), start.clone(), socket.clone(), one.to_string());
+        let home = daemon.home.clone();
         std::thread::spawn(move || {
             let (mut adds, mut wholes) = (Vec::new(), Vec::new());
             start.wait();
             while !stop.load(Ordering::Relaxed) {
                 adds.push(timed(|| ipc::call(&socket, &Request::Add { target: one.clone(), next: true }).unwrap()).1);
                 if whole {
-                    wholes.push(timed(|| ipc::call(&socket, &Request::Queue { offset: 0, count: None }).unwrap()).1);
+                    wholes.push(timed(|| assert!(cli(&home, &["--json", "queue"]).status.success())).1);
                 }
                 std::thread::sleep(Duration::from_millis(100));
             }
@@ -156,7 +168,7 @@ fn poll(daemon: &Daemon, one: &str, whole: bool) -> Duration {
     adds.sort();
     wholes.sort();
 
-    println!("{}:", if whole { "an agent adding and reading the whole queue" } else { "an agent adding" });
+    println!("{}:", if whole { "an agent adding and running `agentamp queue`" } else { "an agent adding" });
     println!(
         "  {WINDOWS} windows, status + 200 of the queue, {} asks in {POLLING:?}: median {:.2?}, p99 {:.2?}, slowest {:.2?}",
         waits.len(),
@@ -166,7 +178,7 @@ fn poll(daemon: &Daemon, one: &str, whole: bool) -> Duration {
     );
     println!("  one track added next {} times: median {:.2?}, slowest {:.2?}", adds.len(), percentile(&adds, 0.5), adds[adds.len() - 1]);
     if whole {
-        println!("  the whole queue read {} times: median {:.2?}, slowest {:.2?}", wholes.len(), percentile(&wholes, 0.5), wholes[wholes.len() - 1]);
+        println!("  `agentamp --json queue` {} times: median {:.2?}, slowest {:.2?}", wholes.len(), percentile(&wholes, 0.5), wholes[wholes.len() - 1]);
     }
     if let Some(ticks) = ticks {
         println!("  the daemon's CPU: {ticks} ticks in {POLLING:?}");
@@ -207,13 +219,12 @@ fn a_hundred_thousand_tracks_and_eight_windows() {
     println!("memory: idle {}, {FILES} queued {}, {queued} queued {}", mib(idle), mib(after_play), mib(full));
     let one = music.join("00001.wav").to_str().unwrap().to_string();
     let adding = poll(&daemon, &one, false);
-    // Read whole, 100 000 tracks hold up everything the daemon answers;
-    // only `agentamp queue` asks for that. Printed, not judged.
-    poll(&daemon, &one, true);
+    let listing = poll(&daemon, &one, true);
 
     // A window redraws every 500 ms: a look must fit well inside that,
-    // while an agent adds to the queue.
+    // while an agent adds to the queue and lists it whole.
     assert!(adding < Duration::from_millis(50), "the windows waited {adding:.2?}");
+    assert!(listing < Duration::from_millis(50), "the windows waited {listing:.2?} while the queue was listed");
     drop(daemon);
     std::fs::remove_dir_all(&root).unwrap();
 }

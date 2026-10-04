@@ -140,8 +140,12 @@ queue as fast as they can for 10 s, while an agent adds a track every
   at 1.3 cores: a real window asks twice a second. Each add takes 1.5 ms.
 - When the agent also reads the whole queue after each add, a read takes
   118 ms on the daemon, and the windows' p99 goes to 83 ms (slowest
-  160 ms): the daemon answers one request at a time. Only `agentamp queue`
-  reads it whole; the window and the MCP tool ask for a stretch.
+  160 ms): the daemon answers one request at a time.
+- `agentamp queue` now reads it 1 000 tracks at a time. With the agent
+  running it after each add, the windows' p99 is 10.5 ms (slowest
+  15.9 ms; 8.6 ms with adds alone, in the same run at load about 3), and
+  the listing of 100 000 tracks takes 470 ms, its pages waiting behind
+  the eight windows'.
 
 ## YouTube play and add (2026-10-03)
 
@@ -203,8 +207,6 @@ Then:
 
 ## What is left
 
-- `agentamp queue` reads a long queue whole, holding up the daemon for
-  about 120 ms at 100 000 tracks; reading it a stretch at a time would not.
 - Details: an index of where each track sits in the queue, should a
   batch's walk ever show at 100 000 tracks.
 

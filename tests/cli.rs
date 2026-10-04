@@ -79,6 +79,24 @@ fn nothing_runs_until_asked() {
 }
 
 #[test]
+fn a_long_queue_is_listed_whole() {
+    let home = Home::new("long_queue");
+    let music = home.0.join("music");
+    wav(&music.join("0000.wav"), 60);
+    // Empty files, past the 1 000 tracks the CLI asks for at a time.
+    for i in 1..=2_500 {
+        wav(&music.join(format!("{i:04}.wav")), 0);
+    }
+    home.ok(&["play", music.to_str().unwrap()]);
+    let queue = home.json(&["queue"]);
+    let upcoming = queue["upcoming"].as_array().unwrap();
+    let names: Vec<String> = (1..=2_500).map(|i| format!("{i:04}")).collect();
+    assert_eq!(upcoming.iter().map(|t| t["title"].as_str().unwrap()).collect::<Vec<_>>(), names);
+    assert_eq!(queue["total"], 2_500);
+    assert_eq!(home.ok(&["queue"]).lines().count(), 2_501);
+}
+
+#[test]
 fn plays_a_folder_and_controls_it() {
     let home = Home::new("plays_a_folder");
     let music = home.0.join("music");

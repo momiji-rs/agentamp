@@ -180,7 +180,10 @@ fn run(cli: Cli) -> Result<()> {
         }
     };
     let autostart = !matches!(request, Request::Shutdown | Request::Status | Request::Queue { .. });
-    let data = send(&paths, &request, autostart)?;
+    let data = match request {
+        Request::Queue { .. } => whole_queue(&paths)?,
+        _ => send(&paths, &request, autostart)?,
+    };
     if cli.json {
         println!("{data}");
     } else if let Some(text) = describe(&request, &data) {
@@ -241,6 +244,32 @@ fn send(paths: &Paths, request: &Request, autostart: bool) -> Result<Value> {
         }
         result => result,
     }
+}
+
+/// The whole queue, read a page at a time: the daemon answers one request
+/// at a time, and 100 000 tracks at once would hold up every window.
+fn whole_queue(paths: &Paths) -> Result<Value> {
+    const PAGE: usize = 1_000;
+    let tracks = |page: &mut Value| match page["upcoming"].take() {
+        Value::Array(tracks) => tracks,
+        _ => Vec::new(),
+    };
+    let mut whole = send(paths, &Request::Queue { offset: 0, count: Some(PAGE) }, false)?;
+    // A daemon from before pages gives it all at once, without a total.
+    let Some(mut total) = whole["total"].as_u64() else { return Ok(whole) };
+    let mut upcoming = tracks(&mut whole);
+    while (upcoming.len() as u64) < total {
+        let mut page = send(paths, &Request::Queue { offset: upcoming.len(), count: Some(PAGE) }, false)?;
+        let more = tracks(&mut page);
+        if more.is_empty() {
+            break;
+        }
+        total = page["total"].as_u64().unwrap_or(total);
+        upcoming.extend(more);
+    }
+    whole["upcoming"] = Value::Array(upcoming);
+    whole["total"] = total.into();
+    Ok(whole)
 }
 
 /// The daemon is not running (no socket, or nobody behind it).
