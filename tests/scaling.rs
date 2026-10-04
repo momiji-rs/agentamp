@@ -208,22 +208,46 @@ const CASES: &[Case] = &[
 #[test]
 fn nothing_grows_faster_than_it_should() {
     let mut failures = Vec::new();
+    // Also on the CI run's page, where a passing test's output is not.
+    let mut summary = format!(
+        "### Scaling, {}\n\n| case | {SMALL} | {LARGE} | growth | allowed | budget at {LARGE} | used |\n|---|---|---|---|---|---|---|\n",
+        std::env::consts::OS
+    );
+    println!("{:<40} {:>10} {:>10} {:>7} {:>7} {:>10} {:>5}", "case", SMALL, LARGE, "growth", "allowed", "budget", "used");
     for case in CASES {
         let small = (case.time)(SMALL);
         let large = (case.time)(LARGE);
         let ratio = large.as_secs_f64() / small.as_secs_f64();
-        println!("{:<40} {small:>10.2?} {large:>10.2?}  ×{ratio:.1}", case.name);
-        if ratio > case.growth.limit() {
+        let limit = case.growth.limit();
+        let used = 100.0 * large.as_secs_f64() / case.budget.as_secs_f64();
+        println!(
+            "{:<40} {:>10} {:>10} {:>7} {:>7} {:>10} {:>4.0}%",
+            case.name,
+            format!("{small:.2?}"),
+            format!("{large:.2?}"),
+            format!("×{ratio:.1}"),
+            format!("×{limit}"),
+            format!("{:?}", case.budget),
+            used
+        );
+        summary += &format!(
+            "| {} | {small:.2?} | {large:.2?} | ×{ratio:.1} | ×{limit} | {:?} | {used:.0}% |\n",
+            case.name, case.budget
+        );
+        if ratio > limit {
             failures.push(format!(
-                "{}: {small:.2?} at {SMALL}, {large:.2?} at {LARGE}, ×{ratio:.1} where {:?} allows ×{}",
-                case.name,
-                case.growth,
-                case.growth.limit()
+                "{}: {small:.2?} at {SMALL}, {large:.2?} at {LARGE}, ×{ratio:.1} where {:?} allows ×{limit}",
+                case.name, case.growth
             ));
         }
         if large > case.budget {
             failures.push(format!("{}: {large:.2?} at {LARGE}, over its budget of {:?}", case.name, case.budget));
         }
+    }
+    if let Some(path) = std::env::var_os("GITHUB_STEP_SUMMARY") {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new().append(true).create(true).open(path).unwrap();
+        writeln!(file, "{summary}").unwrap();
     }
     assert!(failures.is_empty(), "\n{}", failures.join("\n"));
 }

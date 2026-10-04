@@ -44,8 +44,13 @@ jobs:
       - name: Clippy, developer mode
         run: cargo clippy --locked --all-targets --features dev -- -D warnings
 
+      # The scaling test runs on its own, so its numbers are printed and
+      # nothing else runs beside it while it times.
       - name: Test
-        run: cargo test --locked
+        run: cargo test --locked -- --skip nothing_grows_faster_than_it_should
+
+      - name: Scaling
+        run: cargo test --locked --test scaling -- --nocapture
 
       - name: Test, developer mode
         run: cargo test --locked --features dev --lib
