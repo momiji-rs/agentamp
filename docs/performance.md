@@ -30,6 +30,12 @@ cached, on a quiet machine (load below 6). Release build.
   the call starts the player) and download behind; before, they took 1.5 to
   4.5 s. The sound itself waits for yt-dlp, about 2.5 s, the first time
   only: a link or search asked for again is ready in 5 to 6 ms (2026-10-03).
+- As the queue and the play log grow (benchmarks, 2026-10-04): the
+  window's state snapshot, asked for every 500 ms, costs 26 ms at 10 000
+  queued tracks (the size of the Liked Songs) and 298 ms at 100 000, as
+  it carries the whole queue. Reading a batch of 200 tracks' details costs
+  4.7 ms at 10 000 and 160 ms at 100 000, worse than linear. Keeping one
+  play takes 0.93 ms whatever the log's size. See below.
 
 ## How to measure
 
@@ -46,6 +52,15 @@ terminals on a headless Hyprland output, out of sight. Both read the
 daemon at `AGENTAMP_HOME`; play a long track there first. Load from other
 work skews both: check `uptime` and rerun on a quiet machine.
 
+```sh
+cargo bench -- --save-baseline main   # the queue and the database at 1k, 10k, 100k
+cargo bench -- --baseline main        # a change against it
+```
+
+The benchmarks (`benches/`) build the same made-up library every run,
+shaped like a real one (about 3.7 songs an artist, a few artists holding
+most), and keep their files in `target/bench-scratch/`.
+
 ## While playing (2026-10-02)
 
 Release build in Ghostty 1.3.1, full screen on a 1920×1080 headless
@@ -55,6 +70,34 @@ AAC file at volume 0, load about 2.4. CPU from `/proc/<pid>/stat`
 1000, Ghostty 69, 69 and 70. Paused for 10 s: the window 0, Ghostty 4.
 Nearly all of the window's time is on its drawing thread; the thread that
 reads the sound from the player stays under one tick in 5 s.
+
+## As the library grows (2026-10-04)
+
+Criterion, release build, the median of each benchmark's run, load about
+1.2 (rustc 1.98.1). The database is on the btrfs home disk.
+
+| benchmark | 1 000 | 10 000 | 100 000 |
+|---|---|---|---|
+| queue/snapshot: the state the window asks for, encoded and decoded | 1.97 ms | 26.5 ms | 298 ms |
+| queue/details: 200 tracks' details put in the queue | 0.43 ms | 4.68 ms | 160 ms |
+| queue/downloads: what the engine checks after each message | 0.42 µs | 4.67 µs | 80.3 µs |
+| queue/replace: `play` with that many tracks | 38.8 µs | 399 µs | 7.02 ms |
+| db/insert: one play kept, in the log of that many | 0.93 ms | 0.93 ms | 0.93 ms |
+| db/open | 200 µs | 204 µs | 202 µs |
+| db/top_artists: every play grouped | 0.19 ms | 2.19 ms | 28.7 ms |
+| db/by_month: every play grouped | 0.11 ms | 1.08 ms | 16.8 ms |
+| db/recent: the last 20, by index | 6.0 µs | 6.1 µs | 6.8 µs |
+| db/one_song: one track's plays, by index | 4.7 µs | 4.8 µs | 4.9 µs |
+| db/import: that many plays in one transaction | 7.70 ms | 50.3 ms | 657 ms |
+
+- The snapshot grows with the queue and is paid twice a second while the
+  window is open: at 100 000 tracks it takes longer than the time
+  between two asks.
+- Details grow faster than the queue: each of the 200 tracks walks the
+  whole queue, and at 100 000 the queue no longer fits the cache.
+- Keeping a play is the disk's flush, not the log's size.
+- Questions over every play grow linearly and stay under 30 ms at
+  100 000 plays; the indexed ones do not grow.
 
 ## YouTube play and add (2026-10-03)
 
@@ -115,6 +158,10 @@ Then:
   [linyiru/ratatui-image-query-options](https://github.com/linyiru/ratatui-image-query-options).
 
 ## What is left
+
+- The snapshot: send the window what it shows, not the whole queue.
+- Details: find a track's places in the queue without walking it once
+  per track.
 
 - Resizing a cover for kitty (Triangle) costs about 3.9 ms on the drawing
   thread, on a quiet machine. Sixel: 176 KB per cover, about 23 ms to

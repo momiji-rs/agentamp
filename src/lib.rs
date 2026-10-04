@@ -8,7 +8,8 @@ mod daemon;
 pub mod db;
 mod deck;
 mod engine;
-mod ipc;
+#[doc(hidden)]
+pub mod ipc;
 mod library;
 mod mcp;
 #[doc(hidden)]
