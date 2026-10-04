@@ -112,9 +112,10 @@ mod unix {
 
     fn openpty(cols: u16, rows: u16) -> (File, OwnedFd) {
         let (mut main, mut child) = (0, 0);
-        let size = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: cols * 10, ws_ypixel: rows * 20 };
+        let mut size = libc::winsize { ws_row: rows, ws_col: cols, ws_xpixel: cols * 10, ws_ypixel: rows * 20 };
+        // Mutable pointers, which macOS asks for and Linux takes as const.
         // SAFETY: valid pointers for the call; no name or termios asked for.
-        let done = unsafe { libc::openpty(&mut main, &mut child, std::ptr::null_mut(), std::ptr::null(), &size) };
+        let done = unsafe { libc::openpty(&mut main, &mut child, std::ptr::null_mut(), std::ptr::null_mut(), &raw mut size) };
         assert_eq!(done, 0, "openpty: {}", std::io::Error::last_os_error());
         // openpty leaves both ends to every child: the window would hold its
         // own terminal open.
