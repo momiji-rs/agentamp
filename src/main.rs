@@ -1,5 +1,6 @@
 mod browse;
 mod daemon;
+mod db;
 mod deck;
 mod engine;
 mod ipc;

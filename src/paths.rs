@@ -10,6 +10,8 @@ pub struct Paths {
     pub config: PathBuf,
     /// Spotify's encrypted audio cache and downloaded YouTube audio.
     pub cache: PathBuf,
+    /// What cannot be fetched again: the library's database.
+    pub data: PathBuf,
     /// The daemon's socket.
     pub runtime: PathBuf,
 }
@@ -28,6 +30,7 @@ impl Paths {
         Ok(Self {
             config: dirs.config_dir().to_path_buf(),
             cache: dirs.cache_dir().to_path_buf(),
+            data: dirs.data_dir().to_path_buf(),
             runtime,
         })
     }
@@ -37,6 +40,7 @@ impl Paths {
         Self {
             config: root.join("config"),
             cache: root.join("cache"),
+            data: root.join("data"),
             runtime: root.join("run"),
         }
     }
@@ -61,6 +65,11 @@ impl Paths {
     /// Downloaded covers, named after their URL.
     pub fn art(&self) -> PathBuf {
         self.cache.join("art")
+    }
+
+    /// What has played, and later the library, in SQLite.
+    pub fn database(&self) -> PathBuf {
+        self.data.join("library.db")
     }
 
     pub fn log(&self) -> PathBuf {

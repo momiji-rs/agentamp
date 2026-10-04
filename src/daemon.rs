@@ -46,7 +46,8 @@ pub async fn run(paths: Paths) -> Result<()> {
         Box::pin(async move { youtube::fetch(&url, &dir).await })
     });
     let (tx, rx) = mpsc::unbounded_channel();
-    let engine = Engine::new(files, DEFAULT_VOLUME, spotify.clone(), fetch, tx.clone(), tap.clone());
+    let engine = Engine::new(files, DEFAULT_VOLUME, spotify.clone(), fetch, tx.clone(), tap.clone())
+        .logging(crate::db::Log::start(paths.database()));
     let engine = tokio::spawn(engine.run(rx));
 
     let accept = async {

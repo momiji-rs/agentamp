@@ -104,6 +104,13 @@ after the terminal closes. It listens on a Unix socket in the runtime
 directory (`$XDG_RUNTIME_DIR/agentamp.sock`) that only your user can open.
 `now` and `queue` never start it. Its log is `~/.cache/agentamp/agentamp.log`.
 
+Each track heard is kept in a SQLite database,
+`~/.local/share/agentamp/library.db` (`~/Library/Application Support/agentamp/`
+on macOS), in its `plays` table: when it started (UTC), how long it was
+heard with pauses left out, its URI or path (a YouTube video's link),
+source, title, artist, album and length. A play is written when the next
+track takes its place or the player stops. Nothing in it leaves the computer.
+
 The volume goes from 0 to 100 on the same curve for Spotify, YouTube and
 files, logarithmic over 60 dB as librespot's is: 50 is 30 dB below full,
 and each step sounds the same size. It scales the sound before your system

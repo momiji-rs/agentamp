@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime};
 
 use anyhow::{Result, bail};
 use librespot_metadata::audio::UniqueFields;
@@ -14,6 +15,7 @@ use serde_json::json;
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::AbortHandle;
 
+use crate::db::{Log, Play};
 use crate::deck::Deck;
 use crate::ipc::{Request, Response};
 use crate::model::{Source, State, Status, Track};
@@ -69,6 +71,19 @@ pub struct Engine {
     fetching: HashMap<String, AbortHandle>,
     tx: mpsc::UnboundedSender<Msg>,
     tap: Arc<Tap>,
+    /// Where finished plays go, when they are kept.
+    log: Option<Log>,
+    listening: Option<Listening>,
+}
+
+/// The track being heard, and for how long so far.
+struct Listening {
+    /// As it is now: its details can arrive after it starts.
+    track: Track,
+    started: SystemTime,
+    heard: Duration,
+    /// Since when it plays, while it is not paused.
+    since: Option<Instant>,
 }
 
 impl Engine {
@@ -94,7 +109,15 @@ impl Engine {
             fetching: HashMap::new(),
             tx,
             tap,
+            log: None,
+            listening: None,
         }
+    }
+
+    /// Keeps each finished play in `log`.
+    pub fn logging(mut self, log: Log) -> Self {
+        self.log = Some(log);
+        self
     }
 
     pub async fn run(mut self, mut rx: mpsc::UnboundedReceiver<Msg>) {
@@ -134,13 +157,52 @@ impl Engine {
                 Msg::Fetched { key, result } => self.fetched(&key, result),
             }
             self.fetch_pending();
+            self.listen();
         }
+        self.finish_listening();
         for task in self.fetching.values() {
             task.abort();
         }
         self.files.release();
         if let Some(deck) = &mut self.spotify_deck {
             deck.stop();
+        }
+    }
+
+    /// Follows what is heard: a play begins when a track sounds and ends
+    /// when another takes its place or the player stops. A track still
+    /// downloading is not heard yet.
+    fn listen(&mut self) {
+        let heard = self.queue.current.clone().filter(|t| !t.downloading && self.state != State::Stopped);
+        if self.listening.as_ref().is_some_and(|l| heard.as_ref().is_none_or(|t| t.uri != l.track.uri)) {
+            self.finish_listening();
+        }
+        let Some(track) = heard else { return };
+        let listening = self.listening.get_or_insert_with(|| Listening {
+            track: track.clone(),
+            started: SystemTime::now(),
+            heard: Duration::ZERO,
+            since: None,
+        });
+        listening.track = track;
+        match (self.state, listening.since) {
+            (State::Playing, None) => listening.since = Some(Instant::now()),
+            (State::Paused, Some(since)) => {
+                listening.heard += since.elapsed();
+                listening.since = None;
+            }
+            _ => {}
+        }
+    }
+
+    fn finish_listening(&mut self) {
+        let Some(listening) = self.listening.take() else { return };
+        let heard = listening.heard + listening.since.map_or(Duration::ZERO, |s| s.elapsed());
+        if let Some(log) = &self.log
+            && !heard.is_zero()
+        {
+            let ms_played = heard.as_millis() as u32;
+            log.record(Play { track: listening.track, started: listening.started, ms_played });
         }
     }
 
@@ -517,12 +579,17 @@ mod tests {
     }
 
     fn start_with(fetch: Fetch) -> mpsc::UnboundedSender<Msg> {
+        start_logging(fetch, None)
+    }
+
+    fn start_logging(fetch: Fetch, log: Option<Log>) -> mpsc::UnboundedSender<Msg> {
         let (tx, rx) = mpsc::unbounded_channel();
         // Tests run in parallel and each clears its directory, so each has its own.
         static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
         let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let paths = crate::paths::Paths::under(&crate::testutil::scratch(&format!("engine-{n}")));
-        let engine = Engine::new(Box::new(NullDeck::default()), 80, Spotify::new(paths), fetch, tx.clone(), Default::default());
+        let mut engine = Engine::new(Box::new(NullDeck::default()), 80, Spotify::new(paths), fetch, tx.clone(), Default::default());
+        engine.log = log;
         tokio::spawn(engine.run(rx));
         tx
     }
@@ -553,6 +620,28 @@ mod tests {
         assert_eq!((title(&s), s.queue_len), ("b", 0));
         let s = status(&tx, Request::Next).await;
         assert_eq!((s.state, s.track), (State::Stopped, None));
+    }
+
+    #[tokio::test]
+    async fn a_play_is_kept_once_it_ends_without_its_pauses() {
+        let (log, plays) = Log::sink();
+        let tx = start_logging(Arc::new(|_| Box::pin(async { bail!("these tests download nothing") })), Some(log));
+        enqueue(&tx, vec![track("a", 60_000), track("b", 60_000)], Mode::Replace).await;
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        status(&tx, Request::Pause).await;
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        status(&tx, Request::Resume).await;
+        assert!(plays.try_recv().is_err(), "a play is kept when it ends");
+        status(&tx, Request::Next).await;
+        let a = plays.recv_timeout(Duration::from_secs(1)).unwrap();
+        assert_eq!(a.track.uri, "a");
+        assert!((200..450).contains(&a.ms_played), "{} ms, the pause left out", a.ms_played);
+
+        status(&tx, Request::Stop).await;
+        assert_eq!(plays.recv_timeout(Duration::from_secs(1)).unwrap().track.uri, "b");
+        // Stopped, the next resume is a play of its own.
+        status(&tx, Request::Resume).await;
+        assert!(plays.try_recv().is_err());
     }
 
     #[tokio::test]
