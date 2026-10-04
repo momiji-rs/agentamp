@@ -94,6 +94,7 @@ agentamp now                       # ▶ Title · Artist  1:23 / 4:29
 agentamp --json now                # the same, for scripts and agents
 agentamp pause | resume | toggle | next | prev | stop | clear
 agentamp queue
+agentamp sync                      # your Liked Songs and their albums, into the database
 agentamp seek 1:30
 agentamp volume 40
 agentamp quit
@@ -110,6 +111,16 @@ on macOS), in its `plays` table: when it started (UTC), how long it was
 heard with pauses left out, its URI or path (a YouTube video's link),
 source, title, artist, album and length. A play is written when the next
 track takes its place or the player stops. Nothing in it leaves the computer.
+
+`agentamp sync` copies your Spotify Liked Songs into the same database.
+The `liked` table has each song's URI, when you liked it (UTC), title,
+artists, album, album URI and length. The `albums` table has each of
+their albums' title, artists, release date (`2014-09-26`, or `2014-09` or
+`2014` when Spotify knows no more), label and kind (`ALBUM`, `SINGLE`,
+`EP`, `COMPILATION`). A sync replaces the songs with what Spotify lists
+now and says how many are new and gone; it reads only the albums it has
+not kept yet, 500 to a request. Ten thousand songs take about 5 seconds.
+Spotify gives no genres, so there are none.
 
 The volume goes from 0 to 100 on the same curve for Spotify, YouTube and
 files, logarithmic over 60 dB as librespot's is: 50 is 30 dB below full,
@@ -173,8 +184,8 @@ server on stdin and stdout, built on the official
 2026-07-28 revision and the older ones with the `initialize` handshake. Its
 tools are the CLI's controls: `play`, `add`, `pause`, `resume`, `next`,
 `previous`, `stop`, `clear_queue`, `set_volume`, `seek`, `now_playing`,
-`queue`, `search_spotify` and `browse`, which list what `search` and
-`browse` do. Each answers as structured JSON, the controls with the
+`queue`, `search_spotify`, `browse` and `sync_library`, which do what
+`search`, `browse` and `sync` do. Each answers as structured JSON, the controls with the
 player's state, and a refusal (a missing file, Spotify without a sign-in)
 as a tool error the agent can read. `queue` lists 20 upcoming tracks
 (`count` up to 100, from `offset`) and says how many there are in all, so

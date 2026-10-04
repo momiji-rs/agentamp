@@ -21,6 +21,7 @@ pub mod queue;
 mod resolve;
 mod spotify;
 mod spotify_search;
+mod sync;
 mod tap;
 mod target;
 mod trace;
@@ -91,6 +92,9 @@ enum Cmd {
         #[arg(long, default_value_t = 20, value_parser = clap::value_parser!(u8).range(1..=50))]
         count: u8,
     },
+    /// Copy your Spotify Liked Songs, with when each was liked, and their
+    /// albums' release dates into the library's database.
+    Sync,
     /// What is playing.
     Now,
     /// What plays next.
@@ -168,6 +172,7 @@ fn run(cli: Cli) -> Result<()> {
         Cmd::Clear => Request::Clear,
         Cmd::Search { query, count } => Request::SearchSpotify { query: query.join(" "), count },
         Cmd::Browse { target, offset, count } => Request::Browse { target: target.join(" "), offset, count },
+        Cmd::Sync => Request::SyncLibrary,
         Cmd::Now => Request::Status,
         Cmd::Queue => Request::Queue { offset: 0, count: None },
         Cmd::Volume { percent } => Request::Volume { percent },
@@ -326,8 +331,20 @@ fn describe(request: &Request, data: &Value) -> Option<String> {
         Request::Play { .. } => status_line(&data["status"]),
         Request::SearchSpotify { .. } => serde_json::from_value(data.clone()).ok().map(|f| found(&f)),
         Request::Browse { .. } => serde_json::from_value(data.clone()).ok().map(|p| page(&p)),
+        Request::SyncLibrary => serde_json::from_value(data.clone()).ok().map(|s| synced(&s)),
         _ => status_line(data),
     }
+}
+
+fn synced(s: &sync::Synced) -> String {
+    let mut text = format!("{} Liked Songs, {} new and {} gone", s.liked, s.new, s.gone);
+    if s.albums_read > 0 {
+        text += &format!("; {} albums read", s.albums_read);
+    }
+    if s.albums_failed > 0 {
+        text += &format!(", {} not given (the next sync asks again)", s.albums_failed);
+    }
+    text
 }
 
 /// Search results by kind, each line ending with the target to play.

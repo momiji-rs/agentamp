@@ -6,7 +6,7 @@
 
 use std::time::{Duration, UNIX_EPOCH};
 
-use agentamp::db::Play;
+use agentamp::db::{Liked, Play};
 use agentamp::model::{Source, Track};
 
 /// The sizes each benchmark runs at: a playlist, the Liked Songs, ten times them.
@@ -72,6 +72,27 @@ pub fn plays(n: usize, songs: usize, seed: u64) -> Vec<Play> {
             let whole = !rng.next().is_multiple_of(4);
             let ms_played = if whole { track.duration_ms } else { (rng.next() % 30_000) as u32 };
             Play { track, started: at, ms_played }
+        })
+        .collect()
+}
+
+/// `n` Liked Songs, liked a few hours apart, newest first as Spotify lists them.
+pub fn liked(n: usize, seed: u64) -> Vec<Liked> {
+    let mut rng = Rng::new(seed ^ 0x11ed);
+    let mut at = 1_600_000_000 + n as u64 * 3 * 3600;
+    tracks(n, seed)
+        .into_iter()
+        .map(|track| {
+            at -= 3600 + rng.next() % (4 * 3600);
+            Liked {
+                added_at: format!("@{at}"),
+                album_uri: Some(format!("spotify:album:{:022}", rng.skewed(n / 8 + 1))),
+                uri: track.uri,
+                title: track.title,
+                artist: track.artist,
+                album: track.album,
+                duration_ms: track.duration_ms,
+            }
         })
         .collect()
 }

@@ -1,7 +1,9 @@
-//! The library's database: what has played, kept in SQLite so the CLI and
-//! agents can ask it anything in SQL. The daemon is its only writer, on a
-//! thread of its own so the player never waits for the disk.
+//! The library's database: what has played and what the Spotify library
+//! holds, kept in SQLite so the CLI and agents can ask it anything in SQL.
+//! The daemon is its only writer: plays on a thread of its own so the
+//! player never waits for the disk, the library when it is synced.
 
+use std::collections::HashSet;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
 use std::sync::mpsc;
@@ -30,6 +32,26 @@ const MIGRATIONS: &[&str] = &["
     );
     CREATE INDEX plays_by_uri ON plays (uri);
     CREATE INDEX plays_by_time ON plays (started_at);
+", "
+    CREATE TABLE liked (
+        uri TEXT PRIMARY KEY,
+        added_at TEXT NOT NULL,
+        title TEXT NOT NULL DEFAULT '',
+        artist TEXT NOT NULL DEFAULT '',
+        album TEXT NOT NULL DEFAULT '',
+        album_uri TEXT,
+        duration_ms INTEGER NOT NULL DEFAULT 0
+    );
+    CREATE INDEX liked_by_time ON liked (added_at);
+    CREATE INDEX liked_by_album ON liked (album_uri);
+    CREATE TABLE albums (
+        uri TEXT PRIMARY KEY,
+        title TEXT NOT NULL DEFAULT '',
+        artist TEXT NOT NULL DEFAULT '',
+        released TEXT,
+        label TEXT,
+        kind TEXT
+    );
 "];
 
 /// One listen to a track, written once it ends.
@@ -39,6 +61,32 @@ pub struct Play {
     pub started: SystemTime,
     /// How long it was heard, pauses left out.
     pub ms_played: u32,
+}
+
+/// A song in the Spotify Liked Songs.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Liked {
+    pub uri: String,
+    /// When it was liked, as Spotify gives it: `2026-10-01T19:55:02Z`.
+    pub added_at: String,
+    pub title: String,
+    pub artist: String,
+    pub album: String,
+    pub album_uri: Option<String>,
+    pub duration_ms: u32,
+}
+
+/// An album of a liked song, with what a liked song does not carry.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Album {
+    pub uri: String,
+    pub title: String,
+    pub artist: String,
+    /// As precisely as Spotify knows it: `2014-09-26`, `2014-09` or `2014`.
+    pub released: Option<String>,
+    pub label: Option<String>,
+    /// `ALBUM`, `SINGLE`, `EP` or `COMPILATION`.
+    pub kind: Option<String>,
 }
 
 /// Opens the database to write, making it and bringing it up to date.
@@ -80,6 +128,53 @@ pub fn insert(db: &Connection, play: &Play) -> Result<()> {
          VALUES (strftime('%Y-%m-%dT%H:%M:%SZ', ?1, 'unixepoch'), ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         params![started, play.ms_played, uri, source, track.title, track.artist, track.album, track.duration_ms],
     )?;
+    Ok(())
+}
+
+/// Makes the `liked` table hold `songs`, in one transaction. Gives how
+/// many of them are new to it and how many it held that are gone.
+pub fn replace_liked(db: &mut Connection, songs: &[Liked]) -> Result<(usize, usize)> {
+    let tx = db.transaction()?;
+    let held: HashSet<String> = tx.prepare("SELECT uri FROM liked")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
+    let now: HashSet<&str> = songs.iter().map(|s| s.uri.as_str()).collect();
+    let new = now.iter().filter(|uri| !held.contains(**uri)).count();
+    let gone = held.iter().filter(|uri| !now.contains(uri.as_str())).count();
+    tx.execute("DELETE FROM liked", [])?;
+    {
+        // A song liked while the pages were read can show on two of them.
+        let mut insert = tx.prepare(
+            "INSERT OR REPLACE INTO liked (uri, added_at, title, artist, album, album_uri, duration_ms)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+        )?;
+        for s in songs {
+            insert.execute(params![s.uri, s.added_at, s.title, s.artist, s.album, s.album_uri, s.duration_ms])?;
+        }
+    }
+    tx.commit()?;
+    Ok((new, gone))
+}
+
+/// The albums of liked songs not in the `albums` table yet. A release
+/// date does not change, so a kept album is never read again.
+pub fn albums_missing(db: &Connection) -> Result<Vec<String>> {
+    let mut statement = db.prepare(
+        "SELECT DISTINCT album_uri FROM liked WHERE album_uri IS NOT NULL
+         AND album_uri NOT IN (SELECT uri FROM albums)",
+    )?;
+    Ok(statement.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?)
+}
+
+pub fn insert_albums(db: &mut Connection, albums: &[Album]) -> Result<()> {
+    let tx = db.transaction()?;
+    {
+        let mut insert = tx.prepare(
+            "INSERT OR REPLACE INTO albums (uri, title, artist, released, label, kind) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )?;
+        for a in albums {
+            insert.execute(params![a.uri, a.title, a.artist, a.released, a.label, a.kind])?;
+        }
+    }
+    tx.commit()?;
     Ok(())
 }
 
@@ -158,5 +253,44 @@ mod tests {
         ));
         let mode = std::fs::metadata(path.parent().unwrap()).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o700, "plays are personal");
+    }
+
+    #[test]
+    fn a_database_of_plays_gains_the_library_and_keeps_its_plays() {
+        let path = crate::testutil::scratch("db-upgrade").join("library.db");
+        {
+            let db = Connection::open(&path).unwrap();
+            db.execute_batch(MIGRATIONS[0]).unwrap();
+            db.pragma_update(None, "user_version", 1).unwrap();
+            let track = Track::placeholder(Source::Local, "/music/a.flac");
+            insert(&db, &Play { track, started: UNIX_EPOCH, ms_played: 1_000 }).unwrap();
+        }
+        let db = open(&path).unwrap();
+        let plays: u32 = db.query_row("SELECT count(*) FROM plays", [], |r| r.get(0)).unwrap();
+        let liked: u32 = db.query_row("SELECT count(*) FROM liked", [], |r| r.get(0)).unwrap();
+        assert_eq!((plays, liked), (1, 0));
+    }
+
+    fn song(uri: &str, album: Option<&str>) -> Liked {
+        Liked { uri: uri.into(), added_at: "2026-10-01T19:55:02Z".into(), album_uri: album.map(str::to_string), ..Liked::default() }
+    }
+
+    #[test]
+    fn a_sync_says_what_is_new_and_gone_and_keeps_each_album_once() {
+        let mut db = open(&crate::testutil::scratch("db-liked").join("library.db")).unwrap();
+        let first = [song("spotify:track:a", Some("spotify:album:x")), song("spotify:track:b", Some("spotify:album:x"))];
+        assert_eq!(replace_liked(&mut db, &first).unwrap(), (2, 0));
+        assert_eq!(albums_missing(&db).unwrap(), ["spotify:album:x"]);
+        let album = Album { uri: "spotify:album:x".into(), released: Some("2014-09-26".into()), ..Album::default() };
+        insert_albums(&mut db, &[album]).unwrap();
+        assert!(albums_missing(&db).unwrap().is_empty(), "a kept album is not read again");
+
+        // b was unliked and c liked, which showed on two pages.
+        let second = [song("spotify:track:a", Some("spotify:album:x")), song("spotify:track:c", None), song("spotify:track:c", None)];
+        assert_eq!(replace_liked(&mut db, &second).unwrap(), (1, 1));
+        let uris: Vec<String> =
+            db.prepare("SELECT uri FROM liked ORDER BY uri").unwrap().query_map([], |r| r.get(0)).unwrap().map(Result::unwrap).collect();
+        assert_eq!(uris, ["spotify:track:a", "spotify:track:c"]);
+        assert!(albums_missing(&db).unwrap().is_empty(), "a song without an album asks for none");
     }
 }

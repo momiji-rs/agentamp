@@ -138,7 +138,7 @@ fn clients_with_the_handshake_get_every_tool() {
         names,
         [
             "add", "browse", "clear_queue", "next", "now_playing", "pause", "play", "previous", "queue",
-            "resume", "search_spotify", "search_youtube", "seek", "set_volume", "stop"
+            "resume", "search_spotify", "search_youtube", "seek", "set_volume", "stop", "sync_library"
         ]
     );
     for tool in &tools {

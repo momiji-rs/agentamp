@@ -24,6 +24,8 @@ through a background player that keeps going between calls. `play` replaces the 
 playlists and artists, `search_youtube` lists videos; pass a result's `target` to `play` or `add`. \
 `browse` opens a Spotify artist, album, playlist or folder, or the library's playlists, albums and artists, \
 the Liked Songs and the top artists and tracks; its items' targets play or browse further. \
+`sync_library` copies the Liked Songs, with when each was liked, and their albums' release dates into the \
+library's SQLite database. \
 A YouTube track answers at once with `downloading: true` and plays when its file is here; one that fails \
 leaves the queue and `now_playing` gives the error.";
 
@@ -274,6 +276,15 @@ impl Player {
             return Err(format!("a page lists 1 to {} items, not {count}", crate::browse::MOST));
         }
         self.ask(Request::Browse { target, offset, count }).await
+    }
+
+    /// Copy the Spotify Liked Songs, with when each was liked, and their albums' release date, label and
+    /// kind into the library's SQLite database (`liked` and `albums` tables), and say how many songs are
+    /// new and gone since the last sync. Albums already kept are not read again. Takes seconds to a
+    /// minute; needs the Spotify sign-in, and starts the background player, which holds it.
+    #[tool(annotations(title = "Sync the Spotify library", read_only_hint = false, destructive_hint = false, idempotent_hint = true, open_world_hint = true))]
+    async fn sync_library(&self) -> Result<Json<crate::sync::Synced>, String> {
+        self.ask(Request::SyncLibrary).await
     }
 
     /// Search YouTube for videos to play, without downloading or playing any. Live streams are left out.

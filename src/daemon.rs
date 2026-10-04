@@ -1,7 +1,7 @@
 //! The background process that keeps playing while no window is open.
 
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
@@ -19,6 +19,7 @@ use crate::paths::Paths;
 use crate::resolve;
 use crate::spotify::Spotify;
 use crate::spotify_search;
+use crate::sync;
 use crate::tap::Tap;
 use crate::youtube;
 
@@ -50,10 +51,11 @@ pub async fn run(paths: Paths) -> Result<()> {
         .logging(crate::db::Log::start(paths.database()));
     let engine = tokio::spawn(engine.run(rx));
 
+    let database = Arc::new(paths.database());
     let accept = async {
         loop {
             let (stream, _) = listener.accept().await?;
-            tokio::spawn(serve(stream, tx.clone(), spotify.clone(), tap.clone()));
+            tokio::spawn(serve(stream, tx.clone(), spotify.clone(), tap.clone(), database.clone()));
         }
         #[allow(unreachable_code)]
         Ok::<(), std::io::Error>(())
@@ -88,13 +90,14 @@ async fn serve(
     tx: mpsc::UnboundedSender<Msg>,
     spotify: Arc<Spotify>,
     tap: Arc<Tap>,
+    database: Arc<PathBuf>,
 ) {
     let (read, mut write) = stream.into_split();
     let mut lines = BufReader::new(read).lines();
     while let Ok(Some(line)) = lines.next_line().await {
         let response = match serde_json::from_str::<Request>(&line) {
             Ok(Request::Listen) => return listen(write, &tap).await,
-            Ok(request) => handle(request, &tx, &spotify).await,
+            Ok(request) => handle(request, &tx, &spotify, &database).await,
             Err(e) => Response::error(format!("not a request: {e}")),
         };
         let mut out = serde_json::to_string(&response).unwrap_or_default();
@@ -137,6 +140,7 @@ async fn handle(
     request: Request,
     tx: &mpsc::UnboundedSender<Msg>,
     spotify: &Arc<Spotify>,
+    database: &Path,
 ) -> Response {
     let (reply, answer) = oneshot::channel();
     let msg = match request {
@@ -177,6 +181,15 @@ async fn handle(
                 Ok(page) => Response::ok(page),
                 Err(e) => {
                     warn!("cannot browse {target}: {e:#}");
+                    Response::error(e)
+                }
+            };
+        }
+        Request::SyncLibrary => {
+            return match sync::sync(spotify, database).await {
+                Ok(synced) => Response::ok(synced),
+                Err(e) => {
+                    warn!("cannot sync the library: {e:#}");
                     Response::error(e)
                 }
             };

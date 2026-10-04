@@ -37,6 +37,8 @@ cached, on a quiet machine (load below 6). Release build.
   and length. Filling in a batch of 10 tracks' details walks the queue
   once: about 0.23 ms at 10 000. Keeping one play takes 0.93 ms whatever
   the log's size. See below.
+- `agentamp sync` of 9 688 Liked Songs and their 1 130 albums takes 5.8 s
+  into an empty database and 4.2 s again, in 13 requests (2026-10-04).
 
 ## How to measure
 
@@ -146,6 +148,28 @@ queue as fast as they can for 10 s, while an agent adds a track every
   15.9 ms; 8.6 ms with adds alone, in the same run at load about 3), and
   the listing of 100 000 tracks takes 470 ms, its pages waiting behind
   the eight windows'.
+
+## Syncing the Liked Songs (2026-10-04)
+
+9 688 Liked Songs of 1 130 albums, debug build, load about 15 (another
+session's build).
+
+- The songs: `fetchLibraryTracks` gives at most 1 000 a request (10 000
+  gives none), 0.9 s each; the first page says how many there are and the
+  other nine go four at a time. A page short of its share stops the sync
+  before the table is touched.
+- The albums: a liked song has no release date. `getAlbum` has it, at
+  about 270 ms an album, but librespot lets a session make 300 requests
+  in 30 s to spotify.com and refuses the rest on its own side ("rate
+  limited"): eight at a time, 734 of 1 130 were refused, and while it
+  lasts playback and browsing are refused too. The catalogue's extended
+  metadata takes many albums to a request: 500 in 0.3 s, every one dated
+  and labelled. The 1 130 take 3 requests.
+- A sync into an empty database: 5.8 s. Again, nothing new: 4.2 s, all of
+  it Spotify's answers. Writing the table is 193 ms at 10 000 songs in a
+  debug build (`tests/scaling.rs`).
+- Of the albums, 1 044 are dated to the day, 2 to the month, 84 to the
+  year only.
 
 ## YouTube play and add (2026-10-03)
 

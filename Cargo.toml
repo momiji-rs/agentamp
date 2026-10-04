@@ -28,6 +28,10 @@ librespot-core = { version = "0.8", default-features = false, features = ["rustl
 librespot-playback = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
 librespot-oauth = { version = "0.8", default-features = false, features = ["rustls-tls-native-roots"] }
 librespot-metadata = { version = "0.8", default-features = false }
+# The catalogue's own messages, for asking about many albums in one
+# request; librespot already builds both.
+librespot-protocol = "0.8"
+protobuf = "3"
 # The sound out, and the decoder for local files and YouTube audio: the
 # same symphonia librespot decodes with, so there is no second decoder.
 rodio = { version = "0.21", default-features = false, features = ["playback", "mp3", "flac", "mp4", "vorbis", "wav"] }

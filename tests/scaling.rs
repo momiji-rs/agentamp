@@ -19,7 +19,7 @@ use agentamp::model::Track;
 use agentamp::queue::Queue;
 use serde_json::Value;
 
-use common::{plays, scratch, tracks};
+use common::{liked, plays, scratch, tracks};
 
 const SMALL: usize = 1_000;
 const LARGE: usize = 10_000;
@@ -200,6 +200,20 @@ const CASES: &[Case] = &[
             let sql = "SELECT artist, count(*) FROM plays GROUP BY artist ORDER BY 2 DESC LIMIT 20";
             least(|| (), |_| {
                 black_box(count(&conn, sql));
+            })
+        },
+    },
+    Case {
+        name: "a sync of the Liked Songs, all kept",
+        growth: Growth::Linear,
+        budget: ms(1_000),
+        time: |n| {
+            let songs = liked(n, 1);
+            let mut conn = db::open(&scratch(&format!("scaling-liked-{n}")).join("library.db")).unwrap();
+            db::replace_liked(&mut conn, &songs).unwrap();
+            least(|| (), |_| {
+                black_box(db::replace_liked(&mut conn, &songs).unwrap());
+                black_box(db::albums_missing(&conn).unwrap());
             })
         },
     },

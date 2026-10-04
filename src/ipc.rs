@@ -45,6 +45,8 @@ pub enum Request {
     /// A Spotify artist, album, playlist or folder, or a part of the
     /// library, with `count` of its paged items from `offset`.
     Browse { target: String, offset: u32, count: u8 },
+    /// Copy the Spotify Liked Songs and their albums into the database.
+    SyncLibrary,
     Shutdown,
     /// Stream the sound as it plays, for drawing it: after the answer the
     /// connection carries `tap` chunks, not JSON.
