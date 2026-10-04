@@ -47,13 +47,13 @@ struct Args {
 /// The shell command that opens `terminal` on the window, and the class
 /// its window gets. A running Ghostty starts the window's command in its
 /// own environment, so the warm command carries the variables itself.
-fn launch(terminal: &str, env: &[String], binary: &str) -> Option<(String, &'static str)> {
+fn launch(terminal: &str, env: &[(&str, String)], binary: &str) -> Option<(String, &'static str)> {
     let cmd = quote(binary);
     let (command, class) = match terminal {
         "ghostty" => (format!("ghostty --class={CLASS} -e {cmd}"), CLASS),
         "ghostty-warm" => {
             let mut argv = vec!["-e".to_string(), "env".to_string()];
-            argv.extend(env.iter().cloned());
+            argv.extend(env.iter().map(|(name, value)| format!("{name}={value}")));
             argv.push(binary.to_string());
             let argv = format!("{} {}", argv.len(), argv.iter().map(|a| quote(a)).collect::<Vec<_>>().join(" "));
             let path = WARM.replace('.', "/");
@@ -63,8 +63,9 @@ fn launch(terminal: &str, env: &[String], binary: &str) -> Option<(String, &'sta
         "alacritty" => (format!("alacritty --class {CLASS} -e {cmd}"), CLASS),
         _ => return None,
     };
-    // Hyprland starts the terminal with its own environment, not ours.
-    let env: Vec<String> = env.iter().map(|v| quote(v)).collect();
+    // Hyprland starts the terminal with its own environment, not ours. Only
+    // the value is quoted: a quoted name is no assignment to the shell.
+    let env: Vec<String> = env.iter().map(|(name, value)| format!("{name}={}", quote(value))).collect();
     Some((format!("{} {command}", env.join(" ")), class))
 }
 
@@ -153,9 +154,9 @@ impl Times {
 
 fn run_once(binary: &str, terminal: &str, trace: &Path) -> Times {
     let _ = std::fs::remove_file(trace);
-    let mut env = vec![format!("AGENTAMP_TRACE={}", trace.display())];
+    let mut env = vec![("AGENTAMP_TRACE", trace.display().to_string())];
     if let Some(home) = std::env::var_os("AGENTAMP_HOME") {
-        env.push(format!("AGENTAMP_HOME={}", std::path::absolute(home).unwrap().display()));
+        env.push(("AGENTAMP_HOME", std::path::absolute(home).unwrap().display().to_string()));
     }
     let Some((command, class)) = launch(terminal, &env, binary) else {
         panic!("no terminal called {terminal}: ghostty, ghostty-warm, foot or alacritty");
