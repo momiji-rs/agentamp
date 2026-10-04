@@ -41,8 +41,8 @@ fn snapshot(c: &mut Criterion) {
     }
 }
 
-/// The details read ahead after a play landing: 200 tracks, each found in
-/// the queue.
+/// The details read ahead after a play landing: 200 tracks, in the batches
+/// of 10 they arrive in.
 fn details(c: &mut Criterion) {
     let mut group = c.benchmark_group("queue/details");
     for n in SIZES {
@@ -52,8 +52,8 @@ fn details(c: &mut Criterion) {
             b.iter_batched_ref(
                 || queue_of(n),
                 |queue| {
-                    for track in &resolved {
-                        queue.update(track);
+                    for batch in resolved.chunks(10) {
+                        queue.update(batch);
                     }
                 },
                 BatchSize::LargeInput,

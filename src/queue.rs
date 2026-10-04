@@ -1,10 +1,10 @@
 //! The play order: the current track, what comes next, and what has played.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use serde::Serialize;
 
-use crate::model::Track;
+use crate::model::{Source, Track};
 
 const HISTORY: usize = 100;
 
@@ -123,10 +123,12 @@ impl Queue {
         before - (self.upcoming.len() + self.history.len() + usize::from(self.current.is_some()))
     }
 
-    /// Fills in details that arrived after the track was queued.
-    pub fn update(&mut self, resolved: &Track) {
-        let same = |t: &&mut Track| t.uri == resolved.uri && t.source == resolved.source;
-        for track in self.current.iter_mut().chain(self.upcoming.iter_mut()).filter(same) {
+    /// Fills in details that arrived after the tracks were queued, in one
+    /// walk through the queue for the whole batch.
+    pub fn update(&mut self, resolved: &[Track]) {
+        let by_uri: HashMap<(&str, Source), &Track> = resolved.iter().map(|t| ((t.uri.as_str(), t.source), t)).collect();
+        for track in self.current.iter_mut().chain(self.upcoming.iter_mut()) {
+            let Some(&resolved) = by_uri.get(&(track.uri.as_str(), track.source)) else { continue };
             let link = track.link.take();
             *track = resolved.clone();
             track.link = track.link.take().or(link);
@@ -197,11 +199,13 @@ mod tests {
         replace(&mut q, vec![placeholder.clone(), t("b"), placeholder]);
         let mut resolved = t("a");
         resolved.title = "Song".into();
-        q.update(&resolved);
+        let mut other = t("b");
+        other.title = "Other".into();
+        q.update(&[resolved, other]);
         assert_eq!(q.current.as_ref().unwrap().title, "Song");
         assert_eq!(q.upcoming[1].title, "Song");
         assert_eq!(q.upcoming[1].link.as_deref(), Some("https://youtu.be/x"));
-        assert_eq!(q.upcoming[0].title, "b");
+        assert_eq!(q.upcoming[0].title, "Other", "one batch fills each of its tracks");
     }
 
     #[test]

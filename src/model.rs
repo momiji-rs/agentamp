@@ -15,7 +15,7 @@ pub fn plain_integers(schema: &mut Schema) {
     schemars::transform::transform_subschemas(&mut plain_integers, schema);
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "lowercase")]
 pub enum Source {
     Spotify,

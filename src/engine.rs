@@ -142,11 +142,7 @@ impl Engine {
                     };
                     let _ = reply.send(response);
                 }
-                Msg::Resolved(tracks) => {
-                    for track in &tracks {
-                        self.queue.update(track);
-                    }
-                }
+                Msg::Resolved(tracks) => self.queue.update(&tracks),
                 Msg::FileEnded(generation) => {
                     if generation == self.generation && self.state != State::Stopped {
                         self.play_next();
@@ -537,7 +533,7 @@ impl Engine {
                     track.duration_ms = audio_item.duration_ms;
                     track.art = crate::spotify::cover(audio_item.covers.iter().map(|c| (c.width, c.url.clone())))
                         .or(track.art);
-                    self.queue.update(&track);
+                    self.queue.update(&[track]);
                 }
             }
             PlayerEvent::TimeToPreloadNextTrack { .. } => {

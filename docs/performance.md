@@ -34,8 +34,8 @@ cached, on a quiet machine (load below 6). Release build.
   window's look at the queue, every 500 ms, costs 0.41 ms at 10 000
   queued tracks (the size of the Liked Songs) and 0.51 ms at 100 000, as
   it asks for the first 200 upcoming tracks and the whole queue's count
-  and length. Reading a batch of 200 tracks' details costs 4.7 ms at
-  10 000 and 160 ms at 100 000, worse than linear. Keeping one play takes 0.93 ms whatever
+  and length. Filling in a batch of 10 tracks' details walks the queue
+  once: about 0.23 ms at 10 000. Keeping one play takes 0.93 ms whatever
   the log's size. See below.
 
 ## How to measure
@@ -100,17 +100,23 @@ Criterion, release build, the median of each benchmark's run, load about
 - Questions over every play grow linearly and stay under 30 ms at
   100 000 plays; the indexed ones do not grow.
 
-### The window's look, after (2026-10-04)
+### The window's look and the details, after (2026-10-04)
 
-The daemon answers the window with a stretch of the queue. Against the
-table above, load about 3.8:
+The daemon answers the window with a stretch of the queue, and details
+arriving in a batch are filled in with one walk. Against the table above,
+load about 3.8:
 
 | benchmark | 1 000 | 10 000 | 100 000 |
 |---|---|---|---|
 | queue/snapshot | 0.40 ms (−80%) | 0.41 ms (−98%) | 0.51 ms (−99.8%) |
+| queue/details | 0.43 ms | 4.65 ms | 112 ms (−30%) |
 
-`downloads` and `replace`, unchanged, measured 6 to 8% slower at 100 000
-in the same run, under the higher load.
+The details still grow with the queue: each batch of 10 walks it once, a
+hash lookup a track where it was ten string comparisons. Doing better
+needs an index of where each track sits, which the queue's moves would
+have to keep. At 10 000 a batch costs about 0.23 ms on the engine, so it
+stays as it is. `downloads` and `replace`, unchanged, measured 6 to 8%
+slower at 100 000 in the same run, under the higher load.
 
 ## YouTube play and add (2026-10-03)
 
@@ -172,8 +178,8 @@ Then:
 
 ## What is left
 
-- Details: find a track's places in the queue without walking it once
-  per track.
+- Details: an index of where each track sits in the queue, should a
+  batch's walk ever show at 100 000 tracks.
 
 - Resizing a cover for kitty (Triangle) costs about 3.9 ms on the drawing
   thread, on a quiet machine. Sixel: 176 KB per cover, about 23 ms to
