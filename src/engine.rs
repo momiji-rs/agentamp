@@ -255,6 +255,7 @@ impl Engine {
             Request::SearchSpotify { .. } | Request::Browse { .. } | Request::SyncLibrary => {
                 bail!("Spotify's pages are answered by the daemon")
             }
+            Request::Art { .. } => bail!("covers are fetched by the daemon"),
         }
         Ok(serde_json::to_value(self.status())?)
     }

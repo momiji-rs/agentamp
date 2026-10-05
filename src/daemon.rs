@@ -1,7 +1,7 @@
 //! The background process that keeps playing while no window is open.
 
 use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, bail};
@@ -62,12 +62,12 @@ pub async fn run(paths: Paths) -> Result<()> {
         .logging(crate::db::Log::start(paths.database()));
     let engine = tokio::spawn(engine.run(rx));
 
-    let database = Arc::new(paths.database());
+    let paths = Arc::new(paths);
     let closing = Arc::new(Closing::default());
     let accept = async {
         loop {
             let (stream, _) = listener.accept().await?;
-            tokio::spawn(serve(stream, tx.clone(), spotify.clone(), tap.clone(), database.clone(), closing.clone()));
+            tokio::spawn(serve(stream, tx.clone(), spotify.clone(), tap.clone(), paths.clone(), closing.clone()));
         }
         #[allow(unreachable_code)]
         Ok::<(), std::io::Error>(())
@@ -115,7 +115,7 @@ async fn serve(
     tx: mpsc::UnboundedSender<Msg>,
     spotify: Arc<Spotify>,
     tap: Arc<Tap>,
-    database: Arc<PathBuf>,
+    paths: Arc<Paths>,
     closing: Arc<Closing>,
 ) {
     let (read, mut write) = stream.into_split();
@@ -126,7 +126,7 @@ async fn serve(
             Ok(Request::Listen) => return listen(write, &tap).await,
             Ok(request) => {
                 shutdown = request == Request::Shutdown;
-                handle(request, &tx, &spotify, &database).await
+                handle(request, &tx, &spotify, &paths).await
             }
             Err(e) => Response::error(format!("not a request: {e}")),
         };
@@ -178,7 +178,7 @@ async fn handle(
     request: Request,
     tx: &mpsc::UnboundedSender<Msg>,
     spotify: &Arc<Spotify>,
-    database: &Path,
+    paths: &Paths,
 ) -> Response {
     let (reply, answer) = oneshot::channel();
     let msg = match request {
@@ -224,10 +224,19 @@ async fn handle(
             };
         }
         Request::SyncLibrary => {
-            return match sync::sync(spotify, database).await {
+            return match sync::sync(spotify, &paths.database()).await {
                 Ok(synced) => Response::ok(synced),
                 Err(e) => {
                     warn!("cannot sync the library: {e:#}");
+                    Response::error(e)
+                }
+            };
+        }
+        Request::Art { url } => {
+            return match crate::art::fetch(&url, &paths.art()).await {
+                Ok(path) => Response::ok(serde_json::json!({"path": path})),
+                Err(e) => {
+                    log::debug!("cover {url}: {e:#}");
                     Response::error(e)
                 }
             };

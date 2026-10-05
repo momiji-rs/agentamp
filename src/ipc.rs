@@ -51,6 +51,9 @@ pub enum Request {
     /// Stream the sound as it plays, for drawing it: after the answer the
     /// connection carries `tap` chunks, not JSON.
     Listen,
+    /// The kept file of a Spotify or YouTube cover, downloaded first when
+    /// it is not kept yet: `{"path": ...}`.
+    Art { url: String },
 }
 
 fn is_zero(n: &usize) -> bool {

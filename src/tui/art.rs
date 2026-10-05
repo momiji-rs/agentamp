@@ -7,7 +7,8 @@ use bytes::Bytes;
 use image::imageops::FilterType;
 use librespot_core::http_client::HttpClient;
 
-use super::cover::{Picture, hash};
+use super::cover::Picture;
+use crate::art::{file, keep};
 
 /// Covers decode to this many pixels a side; the largest place one shows
 /// is the Now playing panel, 32 columns of half blocks.
@@ -26,7 +27,7 @@ pub struct Art {
 /// from `dir`, or an audio file whose tags hold the picture.
 pub fn load(art: &str, dir: &Path, client: &HttpClient, runtime: &tokio::runtime::Runtime) -> Result<Art> {
     let bytes = if art.starts_with("https://") {
-        let file = dir.join(format!("{:016x}", hash(art)));
+        let file = file(dir, art);
         match std::fs::read(&file) {
             Ok(bytes) => bytes,
             Err(_) => {
@@ -40,15 +41,6 @@ pub fn load(art: &str, dir: &Path, client: &HttpClient, runtime: &tokio::runtime
         embedded(Path::new(art))?
     };
     decode(&bytes)
-}
-
-/// Writes the whole file or nothing, so a cut-off download is never read.
-fn keep(file: &Path, bytes: &[u8]) -> Result<()> {
-    std::fs::create_dir_all(file.parent().context("no cover directory")?)?;
-    let partial = file.with_extension("part");
-    std::fs::write(&partial, bytes)?;
-    std::fs::rename(&partial, file)?;
-    Ok(())
 }
 
 /// The front cover in a file's tags, or else its first picture.
@@ -129,7 +121,7 @@ mod tests {
     fn fetched_covers_are_read_back_from_the_cache() {
         let dir = crate::testutil::scratch("art-cache");
         let url = "https://i.scdn.co/image/ab67616d00001e02";
-        keep(&dir.join(format!("{:016x}", hash(url))), &png(&letterboxed())).unwrap();
+        keep(&file(&dir, url), &png(&letterboxed())).unwrap();
         // The runtime has no I/O driver, so this reads the cache, not the network.
         let client = HttpClient::new(None);
         let runtime = tokio::runtime::Builder::new_current_thread().build().unwrap();

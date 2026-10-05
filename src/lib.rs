@@ -2,6 +2,7 @@
 //! is `main`; the modules the benchmarks measure are public, the rest stay
 //! the binary's own.
 
+mod art;
 mod browse;
 mod daemon;
 #[doc(hidden)]
