@@ -51,6 +51,10 @@ pub struct Hit {
     pub duration_ms: Option<u32>,
     /// The `spotify:` URI, for `play` or `add`.
     pub target: String,
+    /// The cover's URL: an album's, a track's album's, a playlist's, an
+    /// artist's portrait.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub art: Option<String>,
 }
 
 /// Up to `count` tracks, albums, playlists and artists Spotify finds for `query`.
@@ -99,9 +103,26 @@ pub fn playable(data: &Value) -> bool {
     data["playability"]["playable"].as_bool() != Some(false)
 }
 
+/// The cover of what `data` describes, wherever the web player's queries
+/// put it for each kind.
+pub fn art(data: &Value) -> Option<String> {
+    let pictures = [
+        &data["coverArt"],
+        &data["albumOfTrack"]["coverArt"],
+        &data["images"]["items"][0],
+        &data["image"],
+        &data["visuals"]["avatarImage"],
+    ];
+    pictures.into_iter().find_map(|picture| {
+        // A playlist's one picture has no width.
+        let sizes = picture["sources"].as_array()?.iter();
+        crate::spotify::cover(sizes.filter_map(|s| Some((s["width"].as_i64().unwrap_or(0) as i32, s["url"].as_str()?.to_string()))))
+    })
+}
+
 fn hit(data: &Value, kind: &str, artist: String) -> Option<Hit> {
     let target = data["uri"].as_str().filter(|u| u.starts_with(kind))?;
-    Some(Hit { title: data["name"].as_str()?.to_string(), artist, ..Hit::new(target) })
+    Some(Hit { title: data["name"].as_str()?.to_string(), artist, art: art(data), ..Hit::new(target) })
 }
 
 /// A track as the web player's queries give one, unless it cannot play.
@@ -127,13 +148,13 @@ pub fn playlist(data: &Value) -> Option<Hit> {
 
 pub fn artist(data: &Value) -> Option<Hit> {
     let target = data["uri"].as_str().filter(|u| u.starts_with("spotify:artist:"))?;
-    Some(Hit { title: data["profile"]["name"].as_str()?.to_string(), ..Hit::new(target) })
+    Some(Hit { title: data["profile"]["name"].as_str()?.to_string(), art: art(data), ..Hit::new(target) })
 }
 
 impl Hit {
     pub fn new(target: &str) -> Self {
         let target = target.to_string();
-        Hit { title: String::new(), artist: String::new(), album: None, year: None, duration_ms: None, target }
+        Hit { title: String::new(), artist: String::new(), album: None, year: None, duration_ms: None, target, art: None }
     }
 }
 
@@ -164,6 +185,7 @@ async fn context(spotify: &Arc<Spotify>, session: &Session, query: &str, count: 
                 year: None,
                 duration_ms: Some(t.duration_ms),
                 target: t.uri,
+                art: t.art,
             })),
             (_, Err(e)) => warn!("a search result has no details: {e:#}"),
         }
@@ -241,6 +263,7 @@ mod tests {
             year: None,
             duration_ms: Some(294493),
             target: "spotify:track:7rU6Iebxzlvqy5t857bKFq".into(),
+            art: None,
         });
         assert_eq!(found.tracks[1].artist, "Friday Night Plans, Tokyo");
         assert_eq!(found.albums[0].year, Some(2018));
@@ -249,6 +272,25 @@ mod tests {
         assert_eq!(found.playlists[0].artist, "mert.uslu13 on Instagram");
         assert_eq!(found.artists, vec![Hit { title: "Miki Matsubara".into(), ..Hit::new("spotify:artist:4hUmsYcvD8C5zuVSP93jb1") }]);
         assert_eq!(parse(&answer(), 1).unwrap().tracks.len(), 1);
+    }
+
+    #[test]
+    fn each_kind_has_its_cover_where_the_web_player_puts_it() {
+        let sizes = |id: &str| json!({"sources": [
+            {"url": format!("https://i.scdn.co/image/{id}-300"), "width": 300, "height": 300},
+            {"url": format!("https://i.scdn.co/image/{id}-64"), "width": 64, "height": 64},
+            {"url": format!("https://i.scdn.co/image/{id}-640"), "width": 640, "height": 640}]});
+        let album = json!({"uri": "spotify:album:a", "name": "A", "coverArt": sizes("album")});
+        let track = json!({"uri": "spotify:track:t", "name": "T", "albumOfTrack": {"coverArt": sizes("track")}});
+        let playlist = json!({"uri": "spotify:playlist:p", "name": "P",
+            "images": {"items": [{"sources": [{"url": "https://image-cdn-fa.spotifycdn.com/image/p", "width": null, "height": null}]}]}});
+        let artist = json!({"uri": "spotify:artist:r", "profile": {"name": "R"}, "visuals": {"avatarImage": sizes("artist")}});
+        let art = |hit: Option<Hit>| hit.unwrap().art;
+        assert_eq!(art(super::album(&album)).as_deref(), Some("https://i.scdn.co/image/album-300"), "the smallest that is sharp");
+        assert_eq!(art(super::track(&track)).as_deref(), Some("https://i.scdn.co/image/track-300"));
+        assert_eq!(art(super::playlist(&playlist)).as_deref(), Some("https://image-cdn-fa.spotifycdn.com/image/p"));
+        assert_eq!(art(super::artist(&artist)).as_deref(), Some("https://i.scdn.co/image/artist-300"));
+        assert_eq!(art(super::album(&json!({"uri": "spotify:album:a", "name": "A"}))), None);
     }
 
     #[test]

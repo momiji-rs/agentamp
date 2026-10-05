@@ -180,14 +180,13 @@ fn album_page(data: &Value) -> Result<Page> {
     let page = &data["albumUnion"];
     found(page, "Album", "album")?;
     let tracks = &page["tracksV2"];
+    // An album's tracks are not given its cover again.
+    let cover = crate::spotify_search::art(page);
+    let items = list(tracks).filter_map(|i| track(&i["track"])).map(|t| Hit { art: t.art.clone().or(cover.clone()), ..t });
     Ok(Page {
         title: page["name"].as_str().unwrap_or_default().into(),
         by: crate::spotify_search::artists(page),
-        sections: vec![Section::new(
-            "Tracks",
-            tracks["totalCount"].as_u64(),
-            list(tracks).filter_map(|i| track(&i["track"])).collect(),
-        )],
+        sections: vec![Section::new("Tracks", tracks["totalCount"].as_u64(), items.collect())],
     })
 }
 
@@ -218,7 +217,7 @@ fn library_page(data: &Value, filter: &str, title: &str) -> Result<Page> {
                 Some(Hit { title: data["name"].as_str()?.into(), ..Hit::new(data["uri"].as_str()?) })
             }
             "LibraryPseudoPlaylistResponseWrapper" if item["_uri"] == "spotify:collection:tracks" => {
-                Some(Hit { title: data["name"].as_str().unwrap_or("Liked Songs").into(), ..Hit::new("liked") })
+                Some(Hit { title: data["name"].as_str().unwrap_or("Liked Songs").into(), art: crate::spotify_search::art(data), ..Hit::new("liked") })
             }
             _ => None,
         }
@@ -379,6 +378,15 @@ mod tests {
         let mut folder = data.clone();
         folder["me"]["libraryV3"]["breadcrumbs"] = json!([{"name": "Grene", "uri": "spotify:user:12572401:folder:7e65e58f6872a79a"}]);
         assert_eq!(library_page(&folder, "Playlists", "").unwrap().title, "Grene");
+    }
+
+    #[test]
+    fn an_albums_tracks_take_its_cover() {
+        let cover = |id: &str| json!({"sources": [{"url": format!("https://i.scdn.co/image/{id}"), "width": 640, "height": 640}]});
+        let data = json!({"albumUnion": {"__typename": "Album", "name": "Expressions", "coverArt": cover("album"),
+            "tracksV2": {"totalCount": 1, "items": [{"track": track("Plastic Love", "spotify:track:7rU6Iebxzlvqy5t857bKFq", true)}]}}});
+        let page = album_page(&data).unwrap();
+        assert_eq!(page.sections[0].items[0].art.as_deref(), Some("https://i.scdn.co/image/album"));
     }
 
     #[test]
