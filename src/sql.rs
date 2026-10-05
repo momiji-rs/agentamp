@@ -44,6 +44,7 @@ const ABOUT: &[About] = &[
         ("album", ""),
         ("album_uri", "Its album's spotify:album: URI, the uri of a row of albums."),
         ("duration_ms", "Its length."),
+        ("art", "Its album's cover URL, as of the last sync. NULL until a sync has read it."),
     ]),
     ("albums", "The albums of the liked songs, as Spotify's catalogue describes them.", &[
         ("uri", "Its spotify:album: URI."),

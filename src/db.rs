@@ -60,6 +60,8 @@ const MIGRATIONS: &[&str] = &["
     -- A song's plays in time order, for an import to find AgentAmp's own near one.
     CREATE INDEX plays_by_uri_time ON plays (uri, started_at);
     DROP INDEX plays_by_uri;
+", "
+    ALTER TABLE liked ADD COLUMN art TEXT;
 "];
 
 /// One listen to a track, written once it ends.
@@ -82,6 +84,8 @@ pub struct Liked {
     pub album: String,
     pub album_uri: Option<String>,
     pub duration_ms: u32,
+    /// Its album's cover URL.
+    pub art: Option<String>,
 }
 
 /// An album of a liked song, with what a liked song does not carry.
@@ -212,11 +216,11 @@ pub fn replace_liked(db: &mut Connection, songs: &[Liked]) -> Result<(usize, usi
     {
         // A song liked while the pages were read can show on two of them.
         let mut insert = tx.prepare(
-            "INSERT OR REPLACE INTO liked (uri, added_at, title, artist, album, album_uri, duration_ms)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT OR REPLACE INTO liked (uri, added_at, title, artist, album, album_uri, duration_ms, art)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
         )?;
         for s in songs {
-            insert.execute(params![s.uri, s.added_at, s.title, s.artist, s.album, s.album_uri, s.duration_ms])?;
+            insert.execute(params![s.uri, s.added_at, s.title, s.artist, s.album, s.album_uri, s.duration_ms, s.art])?;
         }
     }
     tx.commit()?;
@@ -338,6 +342,23 @@ mod tests {
         let plays: u32 = db.query_row("SELECT count(*) FROM plays", [], |r| r.get(0)).unwrap();
         let liked: u32 = db.query_row("SELECT count(*) FROM liked", [], |r| r.get(0)).unwrap();
         assert_eq!((plays, liked), (1, 0));
+    }
+
+    #[test]
+    fn liked_songs_from_before_covers_keep_their_rows_and_gain_a_cover_column() {
+        let path = crate::testutil::scratch("db-art").join("library.db");
+        {
+            let db = Connection::open(&path).unwrap();
+            db.execute_batch(&MIGRATIONS[..3].concat()).unwrap();
+            db.pragma_update(None, "user_version", 3).unwrap();
+            db.execute("INSERT INTO liked (uri, added_at) VALUES ('spotify:track:a', '2026-10-01T19:55:02Z')", []).unwrap();
+        }
+        let mut db = open(&path).unwrap();
+        let art = |db: &Connection| db.query_row("SELECT art FROM liked", [], |r| r.get::<_, Option<String>>(0)).unwrap();
+        assert_eq!(art(&db), None);
+        let cover = "https://i.scdn.co/image/ab67616d00001e027b6c2112750367e20464b6b7";
+        replace_liked(&mut db, &[Liked { art: Some(cover.into()), ..song("spotify:track:a", None) }]).unwrap();
+        assert_eq!(art(&db).as_deref(), Some(cover));
     }
 
     fn song(uri: &str, album: Option<&str>) -> Liked {

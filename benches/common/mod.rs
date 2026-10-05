@@ -92,6 +92,7 @@ pub fn liked(n: usize, seed: u64) -> Vec<Liked> {
                 artist: track.artist,
                 album: track.album,
                 duration_ms: track.duration_ms,
+                art: track.art,
             }
         })
         .collect()

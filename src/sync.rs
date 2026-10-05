@@ -1,8 +1,8 @@
 //! Copies the Spotify library into the database: the Liked Songs, with
-//! when each was liked, and their albums' release dates, label and kind,
-//! which a liked song does not carry. The albums come from the catalogue's
-//! metadata, many to a request, as librespot lets a session make 300
-//! requests in 30 s and playback needs its share.
+//! when each was liked and their covers, and their albums' release dates,
+//! label and kind, which a liked song does not carry. The albums come from
+//! the catalogue's metadata, many to a request, as librespot lets a session
+//! make 300 requests in 30 s and playback needs its share.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -22,7 +22,7 @@ use serde_json::{Value, json};
 use crate::db::{self, Album, Liked};
 use crate::model::plain_integers;
 use crate::spotify::Spotify;
-use crate::spotify_search::artists;
+use crate::spotify_search::{art, artists};
 
 /// The most songs `fetchLibraryTracks` gives at once: 10 000 gives none
 /// (2026-10-04).
@@ -148,6 +148,7 @@ fn liked(item: &Value) -> Option<Liked> {
         album: data["albumOfTrack"]["name"].as_str().unwrap_or_default().into(),
         album_uri: data["albumOfTrack"]["uri"].as_str().map(str::to_string),
         duration_ms: data["duration"]["totalMilliseconds"].as_u64().unwrap_or(0) as u32,
+        art: art(data),
     })
 }
 
@@ -190,7 +191,8 @@ mod tests {
         let item = json!({"__typename": "UserLibraryTrackResponse", "addedAt": {"isoString": "2026-10-01T19:55:02Z"},
             "track": {"_uri": "spotify:track:1", "data": {"__typename": "Track", "name": "Boston",
                 "artists": {"items": [{"profile": {"name": "STELLA LEFTY"}}, {"profile": {"name": "Guest"}}]},
-                "albumOfTrack": {"name": "Long Way Home", "uri": "spotify:album:0inYFsNCyffdWte267wXRW"},
+                "albumOfTrack": {"name": "Long Way Home", "uri": "spotify:album:0inYFsNCyffdWte267wXRW",
+                    "coverArt": {"sources": [{"url": "https://i.scdn.co/image/ab67616d00001e027b6c2112750367e20464b6b7", "width": 300}]}},
                 "duration": {"totalMilliseconds": 170859}, "playability": {"playable": false}}}});
         assert_eq!(liked(&item), Some(Liked {
             uri: "spotify:track:1".into(),
@@ -200,6 +202,7 @@ mod tests {
             album: "Long Way Home".into(),
             album_uri: Some("spotify:album:0inYFsNCyffdWte267wXRW".into()),
             duration_ms: 170_859,
+            art: Some("https://i.scdn.co/image/ab67616d00001e027b6c2112750367e20464b6b7".into()),
         }), "a song that cannot play now is still liked");
         let bare = json!({"addedAt": {"isoString": "2026-10-01T19:55:02Z"}, "track": {"_uri": "spotify:track:2", "data": null}});
         assert_eq!(liked(&bare).map(|s| (s.uri, s.album_uri)), Some(("spotify:track:2".into(), None)));
